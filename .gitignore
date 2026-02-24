@@ -1,0 +1,11 @@
+# Mengabaikan environment variables & rahasia
+.env
+chatbot_admisi/.env
+
+# Mengabaikan file sistem Python
+__pycache__/
+*.pyc
+
+# Mengabaikan folder besar Node.js (biar upload nggak berat)
+frontend/node_modules/
+frontend/.next/
