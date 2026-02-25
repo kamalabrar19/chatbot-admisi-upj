@@ -114,13 +114,12 @@ def get_system_prompt():
     
     ATURAN KETAT (GUARDRAILS):
     1. DOMAIN TERBATAS: HANYA jawab pertanyaan yang BERKAITAN dengan Universitas Pembangunan Jaya (UPJ) berdasarkan DATA KNOWLEDGE BASE.
-    2. PENOLAKAN TOPIK LUAR: JIKA pengguna bertanya tentang topik di luar UPJ (misal: coding, cuaca, resep masakan, politik, kampus lain, dll), TOLAK DENGAN HALUS.
-       Format penolakan wajib: "Mohon maaf, saat ini asisten hanya dapat memberikan informasi seputar penerimaan mahasiswa baru di Universitas Pembangunan Jaya (UPJ). Apakah ada informasi program studi atau biaya kuliah UPJ yang ingin ditanyakan?"
-    3. ANTI-HALUSINASI: JANGAN PERNAH berhalusinasi atau mengarang info. Jika info tidak ada di data, arahkan ke kontak resmi.
+    2. PENOLAKAN TOPIK LUAR: JIKA pengguna bertanya tentang topik di luar UPJ, TOLAK DENGAN HALUS.
+    3. ANTI-HALUSINASI: JANGAN PERNAH berhalusinasi atau mengarang info.
     4. GAYA BAHASA: Selalu jawab dengan ramah, profesional, dan antusias. JANGAN menggunakan kata ganti orang kedua tunggal.
-    5. CALL TO ACTION (CTA) WAJIB: Pada setiap akhir jawaban, berikan ajakan kuat dan persuasif untuk segera mendaftar. 
-       Contoh CTA: "Yuk, segera wujudkan masa depan cemerlang bersama UPJ! Pendaftaran online dapat langsung dilakukan melalui https://pmb.upj.ac.id 🎓✨"
+    5. CALL TO ACTION (CTA) WAJIB: Pada setiap akhir jawaban, berikan ajakan kuat dan persuasif untuk segera mendaftar.
     6. KONTAK BANTUAN: Jika butuh konsultasi lebih lanjut, arahkan ke: https://bit.ly/kontakupj
+    7. ATURAN FORMULIR (SANGAT KETAT): JANGAN PERNAH menambahkan kode [TAMPILKAN_FORM] di akhir jawaban, KECUALI pengunjung SECARA EKSPLISIT mengetik kalimat permintaan seperti "minta form", "kasih form daftarnya", atau "saya mau isi data sekarang". Jika pengunjung hanya sekadar bertanya informasi kampus/jurusan, JANGAN gunakan kode tersebut!
     """
 
 # =====================================================================
@@ -179,8 +178,22 @@ def chat():
         raw_answer = call_gemini(user_msg)
     
     final_answer = format_response_html(raw_answer)
+    
+    # === FITUR BARU: SIMPAN LOG KE FIREBASE ===
+    if db is not None:
+        try:
+            # Simpan log ke koleksi 'chat_logs'
+            db.collection("chat_logs").add({
+                "user_message": user_msg,
+                "bot_response": raw_answer, # Simpan teks aslinya
+                "timestamp": firestore.SERVER_TIMESTAMP # Waktu server Firebase
+            })
+            logger.info("✅ Log percakapan berhasil disimpan ke Analytics.")
+        except Exception as e:
+            logger.error(f"⚠️ Gagal menyimpan log: {e}")
+    # ==========================================
+
     return jsonify({"response": final_answer})
 
-# Jalankan Server
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
