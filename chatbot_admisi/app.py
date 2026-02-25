@@ -5,9 +5,12 @@ import os
 import json
 import logging
 import re
-import pandas as pd
 from dotenv import load_dotenv
 import google.generativeai as genai
+
+# === LIBRARY FIREBASE ===
+import firebase_admin
+from firebase_admin import credentials, firestore
 
 # =====================================================================
 # 1. KONFIGURASI AWAL
@@ -28,44 +31,54 @@ if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
 # =====================================================================
-# 2. FUNGSI PEMBACA DATA (JSON & EXCEL)
+# 2. INISIALISASI FIREBASE ADMIN
+# =====================================================================
+# Pastikan file firebase-key.json sudah ada di folder yang sama dengan app.py
+try:
+    # Cek agar tidak inisialisasi ganda saat server reload
+    if not firebase_admin._apps:
+        cred = credentials.Certificate("firebase-key.json")
+        firebase_admin.initialize_app(cred)
+    db = firestore.client()
+    logger.info("✅ Berhasil terhubung ke Firebase Firestore!")
+except Exception as e:
+    logger.error(f"❌ Gagal koneksi ke Firebase. Cek file firebase-key.json Anda! Error: {e}")
+    db = None
+
+# =====================================================================
+# 3. FUNGSI PEMBACA DATA (DARI FIRESTORE)
 # =====================================================================
 def load_knowledge_base():
-    """Membaca info dasar dari JSON dan FAQ dari Excel"""
+    """Membaca FAQ langsung dari Firebase Firestore secara Real-Time"""
     base_data = {"organization": {"name": "UPJ"}, "faq": []}
     
-    # A. Baca Info Dasar Kampus (Opsional, dari JSON lama jika ada)
-    if os.path.exists('admisi_data.json'):
-        try:
-            with open('admisi_data.json', 'r', encoding='utf-8') as f:
-                json_content = json.load(f)
-                base_data['organization'] = json_content.get('organization', {})
-        except Exception as e:
-            logger.error(f"Error baca JSON: {e}")
+    if db is None:
+        logger.warning("⚠️ Database tidak terhubung. AI tidak memiliki data pengetahuan.")
+        return base_data
 
-    # B. Baca Data FAQ dari Excel (Sumber utama pengetahuan AI)
-    excel_path = 'faq_admisi.xlsx'
-    if os.path.exists(excel_path):
-        try:
-            df = pd.read_excel(excel_path)
-            # Bersihkan baris kosong
-            df = df.dropna(subset=['Pertanyaan', 'Jawaban']) 
-            
-            faqs = []
-            for index, row in df.iterrows():
+    try:
+        # Menarik data dari koleksi "faqs" di Firestore
+        faqs_ref = db.collection("faqs")
+        docs = faqs_ref.stream()
+        
+        faqs = []
+        for doc in docs:
+            data = doc.to_dict()
+            if 'q' in data and 'a' in data:
                 faqs.append({
-                    "q": str(row['Pertanyaan']).strip(),
-                    "a": str(row['Jawaban']).strip()
+                    "q": str(data['q']).strip(),
+                    "a": str(data['a']).strip()
                 })
-            base_data['faq'] = faqs
-            logger.info(f"Berhasil meload {len(faqs)} FAQ dari Excel")
-        except Exception as e:
-            logger.error(f"Error baca Excel: {e}")
+            
+        base_data['faq'] = faqs
+        logger.info(f"✅ AI berhasil memuat {len(faqs)} FAQ dari Firebase")
+    except Exception as e:
+        logger.error(f"❌ Error baca data dari Firestore: {e}")
             
     return base_data
 
 # =====================================================================
-# 3. FORMATTER TAMPILAN
+# 4. FORMATTER TAMPILAN
 # =====================================================================
 def format_response_html(text):
     if not text: return ""
@@ -87,7 +100,7 @@ def format_response_html(text):
     return text
 
 # =====================================================================
-# 4. SYSTEM PROMPT (OTAK AI YANG STRICT)
+# 5. SYSTEM PROMPT (OTAK AI YANG STRICT)
 # =====================================================================
 def get_system_prompt():
     current_data = load_knowledge_base() 
@@ -104,14 +117,14 @@ def get_system_prompt():
     2. PENOLAKAN TOPIK LUAR: JIKA pengguna bertanya tentang topik di luar UPJ (misal: coding, cuaca, resep masakan, politik, kampus lain, dll), TOLAK DENGAN HALUS.
        Format penolakan wajib: "Mohon maaf, saat ini asisten hanya dapat memberikan informasi seputar penerimaan mahasiswa baru di Universitas Pembangunan Jaya (UPJ). Apakah ada informasi program studi atau biaya kuliah UPJ yang ingin ditanyakan?"
     3. ANTI-HALUSINASI: JANGAN PERNAH berhalusinasi atau mengarang info. Jika info tidak ada di data, arahkan ke kontak resmi.
-    4. GAYA BAHASA: Selalu jawab dengan ramah, profesional, dan antusias. JANGAN menggunakan kata ganti orang kedua tunggal seperti "kamu" atau "Anda" (gunakan sapaan umum seperti "Kak", "Teman-teman", atau langsung ke intinya).
+    4. GAYA BAHASA: Selalu jawab dengan ramah, profesional, dan antusias. JANGAN menggunakan kata ganti orang kedua tunggal.
     5. CALL TO ACTION (CTA) WAJIB: Pada setiap akhir jawaban, berikan ajakan kuat dan persuasif untuk segera mendaftar. 
        Contoh CTA: "Yuk, segera wujudkan masa depan cemerlang bersama UPJ! Pendaftaran online dapat langsung dilakukan melalui https://pmb.upj.ac.id 🎓✨"
     6. KONTAK BANTUAN: Jika butuh konsultasi lebih lanjut, arahkan ke: https://bit.ly/kontakupj
     """
 
 # =====================================================================
-# 5. FUNGSI PANGGIL AI
+# 6. FUNGSI PANGGIL AI
 # =====================================================================
 def call_groq(user_msg):
     if not GROQ_API_KEY: return None
@@ -130,7 +143,7 @@ def call_groq(user_msg):
         if resp.status_code == 200:
             return resp.json()['choices'][0]['message']['content']
         elif resp.status_code == 429:
-            logger.warning("GROQ LIMIT HABIS (429)! Pindah ke Gemini...")
+            logger.warning("⚠️ GROQ LIMIT HABIS (429)! Pindah ke Gemini...")
             return None 
         else:
             return None
@@ -151,10 +164,8 @@ def call_gemini(user_msg):
         return "Mohon maaf, seluruh server sedang sibuk. Silakan coba kembali nanti."
 
 # =====================================================================
-# 6. ROUTING API
+# 7. ROUTING API (MURNI HANYA UNTUK CHAT)
 # =====================================================================
-
-# Endpoint 1: Chat AI
 @app.route("/chat", methods=["POST"])
 def chat():
     data = request.json
@@ -164,52 +175,12 @@ def chat():
     raw_answer = call_groq(user_msg)
     
     if raw_answer is None:
-        logger.info("Menggunakan Cadangan: Google Gemini")
+        logger.info("🔄 Menggunakan Cadangan: Google Gemini")
         raw_answer = call_gemini(user_msg)
     
     final_answer = format_response_html(raw_answer)
     return jsonify({"response": final_answer})
 
-# Endpoint 2: Menerima Upload Excel dari Dashboard Next.js
-@app.route("/api/upload", methods=["POST"])
-def api_upload():
-    if 'file' not in request.files:
-        return jsonify({"error": "Tidak ada file yang dikirim"}), 400
-        
-    file = request.files['file']
-    
-    if file.filename == '':
-        return jsonify({"error": "File kosong"}), 400
-        
-    if file and file.filename.endswith('.xlsx'):
-        # Timpa file lama dengan yang baru
-        file.save('faq_admisi.xlsx') 
-        return jsonify({"message": "File berhasil diunggah dan AI sudah diperbarui"}), 200
-        
-    return jsonify({"error": "Format salah! Harap unggah file .xlsx"}), 400
-
 # Jalankan Server
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
-
-# Endpoint 3: Mengirim data Excel ke Dashboard Next.js
-@app.route("/api/faqs", methods=["GET"])
-def api_get_faqs():
-    faqs = []
-    excel_path = 'faq_admisi.xlsx'
-    
-    if os.path.exists(excel_path):
-        try:
-            df = pd.read_excel(excel_path)
-            df = df.dropna(subset=['Pertanyaan', 'Jawaban'])
-            for index, row in df.iterrows():
-                faqs.append({
-                    "q": str(row['Pertanyaan']).strip(),
-                    "a": str(row['Jawaban']).strip()
-                })
-            return jsonify({"faqs": faqs}), 200
-        except Exception as e:
-            logger.error(f"Gagal baca excel untuk API: {e}")
-            return jsonify({"error": "Gagal membaca file Excel"}), 500
-            
-    return jsonify({"faqs": []}), 200

@@ -1,6 +1,7 @@
 // src/lib/firebase.ts
 import { initializeApp, getApps } from "firebase/app";
 import { getAuth, GoogleAuthProvider } from "firebase/auth";
+import { getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCwdhWTls-tHG9sPJqB87b5o8PNEEPAGvM",
@@ -12,9 +13,9 @@ const firebaseConfig = {
   measurementId: "G-HN2TY1DDNG"
 };
 
-// Inisialisasi Firebase (mencegah error inisialisasi ganda di Next.js)
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
 const auth = getAuth(app);
 const googleProvider = new GoogleAuthProvider();
+const db = getFirestore(app); // <-- TAMBAHAN BARU
 
-export { auth, googleProvider };
+export { auth, googleProvider, db };
