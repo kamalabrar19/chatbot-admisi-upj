@@ -37,7 +37,7 @@ export default function Home() {
     const messageText = presetText || input;
     if (!messageText.trim()) return;
 
-    // 1. Tampilkan pesan user
+    // 1. Tampilkan pesan user di layar
     setMessages((prev) => [...prev, { sender: "user", text: messageText }]);
     setInput("");
     setIsLoading(true);
@@ -45,11 +45,25 @@ export default function Home() {
     const currentInteraction = interactionCount + 1;
     setInteractionCount(currentInteraction);
 
+    // ================= FITUR BARU: SIAPKAN MEMORI =================
+    // Ambil maksimal 4 obrolan terakhir untuk dikirim sebagai memori (tanpa bubble form)
+    const chatHistory = messages
+      .filter(m => !m.isForm && m.text !== "") 
+      .slice(-4) // Ambil 4 terakhir agar memori fokus dan hemat token API
+      .map(m => ({
+        role: m.sender === "user" ? "user" : "assistant",
+        content: m.text.replace(/<[^>]+>/g, '') // Buang kode HTML biar rapi saat dibaca AI
+      }));
+    // ==============================================================
+
     try {
       const res = await fetch("http://127.0.0.1:5000/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: messageText }),
+        body: JSON.stringify({ 
+          message: messageText,
+          history: chatHistory // Kirim memorinya ke backend!
+        }),
       });
       const data = await res.json();
       
@@ -87,7 +101,7 @@ export default function Home() {
     }
   };
 
-  // Fungsi saat form dikirim
+  // Fungsi saat form Lead Generation dikirim
   const handleLeadSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.name || !formData.phone || !formData.major) return;
@@ -104,7 +118,7 @@ export default function Home() {
       setIsRegistered(true);
       
       setMessages((prev) => [
-        // Opsional: Hapus bubble form yang ada di layar biar bersih
+        // Hapus bubble form yang ada di layar biar bersih
         ...prev.filter(m => !m.isForm), 
         {
           sender: "bot",

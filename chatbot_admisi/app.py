@@ -123,18 +123,26 @@ def get_system_prompt():
     """
 
 # =====================================================================
-# 6. FUNGSI PANGGIL AI
+# 6. FUNGSI PANGGIL AI (DILENGKAPI MEMORI)
 # =====================================================================
-def call_groq(user_msg):
+def call_groq(user_msg, history=[]):
     if not GROQ_API_KEY: return None
     try:
         headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
+        
+        # 1. Masukkan System Prompt (Otak Utama)
+        messages = [{"role": "system", "content": get_system_prompt()}]
+        
+        # 2. Masukkan Riwayat Obrolan Sebelumnya (Memori)
+        for h in history:
+            messages.append({"role": h["role"], "content": h["content"]})
+            
+        # 3. Masukkan Pertanyaan Terbaru
+        messages.append({"role": "user", "content": user_msg})
+
         payload = {
             "model": "llama-3.1-8b-instant",
-            "messages": [
-                {"role": "system", "content": get_system_prompt()},
-                {"role": "user", "content": user_msg}
-            ],
+            "messages": messages,
             "temperature": 0.2
         }
         resp = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=5)
@@ -150,48 +158,63 @@ def call_groq(user_msg):
         logger.error(f"Groq Connection Error: {e}")
         return None
 
-def call_gemini(user_msg):
+def call_gemini(user_msg, history=[]):
     if not GEMINI_API_KEY: return "Mohon maaf, server sedang sibuk. Silakan coba beberapa saat lagi."
     try:
+        # Konfigurasi Gemini 1.5 dengan System Prompt bawaan
         generation_config = genai.types.GenerationConfig(temperature=0.2)
-        model = genai.GenerativeModel("gemini-1.5-flash", generation_config=generation_config)
-        full_prompt = f"{get_system_prompt()}\n\nPertanyaan: {user_msg}"
-        resp = model.generate_content(full_prompt)
+        model = genai.GenerativeModel(
+            "gemini-1.5-flash", 
+            generation_config=generation_config,
+            system_instruction=get_system_prompt() # Masukkan aturan ke sistem
+        )
+        
+        # Format history untuk Gemini (user dan model)
+        gemini_history = []
+        for h in history:
+            role = "user" if h["role"] == "user" else "model"
+            # Bersihkan tag HTML <b> atau <br> dari history agar AI tidak bingung
+            clean_content = re.sub(r'<[^>]+>', '', h["content"])
+            gemini_history.append({"role": role, "parts": [clean_content]})
+
+        # Mulai sesi chat dengan memori
+        chat = model.start_chat(history=gemini_history)
+        resp = chat.send_message(user_msg)
         return resp.text
     except Exception as e:
         logger.error(f"Gemini Error: {e}")
         return "Mohon maaf, seluruh server sedang sibuk. Silakan coba kembali nanti."
 
 # =====================================================================
-# 7. ROUTING API (MURNI HANYA UNTUK CHAT)
+# 7. ROUTING API (MENERIMA PAYLOAD HISTORY)
 # =====================================================================
 @app.route("/chat", methods=["POST"])
 def chat():
     data = request.json
     user_msg = data.get("message")
+    chat_history = data.get("history", []) # Menangkap riwayat dari Next.js
+    
     if not user_msg: return jsonify({"error": "Pesan kosong"}), 400
 
-    raw_answer = call_groq(user_msg)
+    # Lempar pesan + memori ke AI
+    raw_answer = call_groq(user_msg, chat_history)
     
     if raw_answer is None:
         logger.info("🔄 Menggunakan Cadangan: Google Gemini")
-        raw_answer = call_gemini(user_msg)
+        raw_answer = call_gemini(user_msg, chat_history)
     
     final_answer = format_response_html(raw_answer)
     
-    # === FITUR BARU: SIMPAN LOG KE FIREBASE ===
+    # Simpan log ke Firebase
     if db is not None:
         try:
-            # Simpan log ke koleksi 'chat_logs'
             db.collection("chat_logs").add({
                 "user_message": user_msg,
-                "bot_response": raw_answer, # Simpan teks aslinya
-                "timestamp": firestore.SERVER_TIMESTAMP # Waktu server Firebase
+                "bot_response": raw_answer, 
+                "timestamp": firestore.SERVER_TIMESTAMP 
             })
-            logger.info("✅ Log percakapan berhasil disimpan ke Analytics.")
         except Exception as e:
             logger.error(f"⚠️ Gagal menyimpan log: {e}")
-    # ==========================================
 
     return jsonify({"response": final_answer})
 
