@@ -48,11 +48,12 @@ export default function Home() {
     // ================= FITUR BARU: SIAPKAN MEMORI =================
     // Ambil maksimal 4 obrolan terakhir untuk dikirim sebagai memori (tanpa bubble form)
     const chatHistory = messages
-      .filter(m => !m.isForm && m.text !== "") 
-      .slice(-4) // Ambil 4 terakhir agar memori fokus dan hemat token API
+      .filter(m => !m.isForm && m.text !== "")
+      .filter(m => !m.text.includes("Halo! 👋")) // <--- TAMBAHKAN BARIS INI
+      .slice(-4) 
       .map(m => ({
         role: m.sender === "user" ? "user" : "assistant",
-        content: m.text.replace(/<[^>]+>/g, '') // Buang kode HTML biar rapi saat dibaca AI
+        content: m.text.replace(/<[^>]+>/g, '') 
       }));
     // ==============================================================
 

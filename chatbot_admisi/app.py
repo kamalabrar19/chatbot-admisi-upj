@@ -5,10 +5,10 @@ import os
 import json
 import logging
 import re
+import time # <-- TAMBAHAN BARU UNTUK WAKTU CACHE
 from dotenv import load_dotenv
 import google.generativeai as genai
 
-# === LIBRARY FIREBASE ===
 import firebase_admin
 from firebase_admin import credentials, firestore
 
@@ -20,44 +20,50 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-# Mengizinkan Frontend Next.js berkomunikasi dengan API ini
 CORS(app) 
 
-# --- API KEYS ---
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
-# =====================================================================
-# 2. INISIALISASI FIREBASE ADMIN
-# =====================================================================
-# Pastikan file firebase-key.json sudah ada di folder yang sama dengan app.py
 try:
-    # Cek agar tidak inisialisasi ganda saat server reload
     if not firebase_admin._apps:
         cred = credentials.Certificate("firebase-key.json")
         firebase_admin.initialize_app(cred)
     db = firestore.client()
     logger.info("✅ Berhasil terhubung ke Firebase Firestore!")
 except Exception as e:
-    logger.error(f"❌ Gagal koneksi ke Firebase. Cek file firebase-key.json Anda! Error: {e}")
+    logger.error(f"❌ Gagal koneksi ke Firebase: {e}")
     db = None
 
 # =====================================================================
-# 3. FUNGSI PEMBACA DATA (DARI FIRESTORE)
+# 2. SISTEM CACHING DATABASE (FITUR BARU 🚀)
 # =====================================================================
+# Variabel global untuk menyimpan memori sementara
+FAQ_CACHE = None
+LAST_FETCH_TIME = 0
+CACHE_DURATION = 3600 # Waktu kadaluarsa cache: 3600 detik (1 Jam)
+
 def load_knowledge_base():
-    """Membaca FAQ langsung dari Firebase Firestore secara Real-Time"""
+    """Membaca FAQ dari Firebase dengan Sistem In-Memory Caching"""
+    global FAQ_CACHE, LAST_FETCH_TIME
+    
+    current_time = time.time()
+    
+    # JIKA CACHE MASIH VALID (Belum 1 jam), AMBIL DARI RAM! (Super Cepat)
+    if FAQ_CACHE is not None and (current_time - LAST_FETCH_TIME) < CACHE_DURATION:
+        logger.info("⚡ Mengambil data FAQ dari Cache RAM (Hemat Kuota Database!)")
+        return FAQ_CACHE
+
+    # JIKA CACHE KOSONG/KADALUARSA, TARIK DARI FIREBASE (Lambat tapi Update)
     base_data = {"organization": {"name": "UPJ"}, "faq": []}
     
     if db is None:
-        logger.warning("⚠️ Database tidak terhubung. AI tidak memiliki data pengetahuan.")
         return base_data
 
     try:
-        # Menarik data dari koleksi "faqs" di Firestore
         faqs_ref = db.collection("faqs")
         docs = faqs_ref.stream()
         
@@ -65,33 +71,35 @@ def load_knowledge_base():
         for doc in docs:
             data = doc.to_dict()
             if 'q' in data and 'a' in data:
-                faqs.append({
-                    "q": str(data['q']).strip(),
-                    "a": str(data['a']).strip()
-                })
+                faqs.append({"q": str(data['q']).strip(), "a": str(data['a']).strip()})
             
         base_data['faq'] = faqs
-        logger.info(f"✅ AI berhasil memuat {len(faqs)} FAQ dari Firebase")
+        
+        # SIMPAN HASIL TARIKAN KE DALAM RAM
+        FAQ_CACHE = base_data
+        LAST_FETCH_TIME = current_time
+        
+        logger.info(f"🔄 Cache Diperbarui: Memuat {len(faqs)} FAQ dari Firebase")
     except Exception as e:
         logger.error(f"❌ Error baca data dari Firestore: {e}")
+        # Kalau gagal narik data baru, pakai data lama di RAM (jika ada)
+        if FAQ_CACHE is not None:
+            return FAQ_CACHE
             
     return base_data
 
 # =====================================================================
-# 4. FORMATTER TAMPILAN
+# 3. FORMATTER TAMPILAN
 # =====================================================================
 def format_response_html(text):
     if not text: return ""
     text = text.replace('\n', '<br>')
     text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', text)
-    
-    # Format Link Markdown
     text = re.sub(
         r'\[([^\]]+)\]\((https?://[^\)]+)\)', 
         r'<a href="\2" target="_blank" class="text-blue-600 hover:text-blue-800 underline font-semibold">\1</a>', 
         text
     )
-    # Format Raw URL
     text = re.sub(
         r'(?<!href=")(?<!src=")(https?://[^\s<"]+)', 
         r'<a href="\1" target="_blank" class="text-blue-600 hover:text-blue-800 underline font-semibold">\1</a>', 
@@ -100,7 +108,7 @@ def format_response_html(text):
     return text
 
 # =====================================================================
-# 5. SYSTEM PROMPT (OTAK AI YANG STRICT)
+# 4. SYSTEM PROMPT
 # =====================================================================
 def get_system_prompt():
     current_data = load_knowledge_base() 
@@ -108,104 +116,95 @@ def get_system_prompt():
     
     return f"""
     PERAN: Asisten Virtual Admisi Universitas Pembangunan Jaya (UPJ).
-    
     DATA KNOWLEDGE BASE: 
     {data_str}
     
-    ATURAN KETAT (GUARDRAILS):
-    1. DOMAIN TERBATAS: HANYA jawab pertanyaan yang BERKAITAN dengan Universitas Pembangunan Jaya (UPJ) berdasarkan DATA KNOWLEDGE BASE.
+    ATURAN KETAT:
+    1. DOMAIN TERBATAS: HANYA jawab pertanyaan yang BERKAITAN dengan Universitas Pembangunan Jaya (UPJ).
     2. PENOLAKAN TOPIK LUAR: JIKA pengguna bertanya tentang topik di luar UPJ, TOLAK DENGAN HALUS.
     3. ANTI-HALUSINASI: JANGAN PERNAH berhalusinasi atau mengarang info.
     4. GAYA BAHASA: Selalu jawab dengan ramah, profesional, dan antusias. JANGAN menggunakan kata ganti orang kedua tunggal.
-    5. CALL TO ACTION (CTA) WAJIB: Pada setiap akhir jawaban, berikan ajakan kuat dan persuasif untuk segera mendaftar.
-    6. KONTAK BANTUAN: Jika butuh konsultasi lebih lanjut, arahkan ke: https://bit.ly/kontakupj
-    7. ATURAN FORMULIR (SANGAT KETAT): JANGAN PERNAH menambahkan kode [TAMPILKAN_FORM] di akhir jawaban, KECUALI pengunjung SECARA EKSPLISIT mengetik kalimat permintaan seperti "minta form", "kasih form daftarnya", atau "saya mau isi data sekarang". Jika pengunjung hanya sekadar bertanya informasi kampus/jurusan, JANGAN gunakan kode tersebut!
+    5. CALL TO ACTION: Pada setiap akhir jawaban, berikan ajakan mendaftar: https://pmb.upj.ac.id
+    6. KONTAK: Jika butuh konsultasi, arahkan ke: https://bit.ly/kontakupj
+    7. ATURAN FORMULIR (SANGAT KETAT): JANGAN PERNAH menambahkan kode [TAMPILKAN_FORM] di akhir jawaban, KECUALI pengunjung SECARA EKSPLISIT mengetik kalimat permintaan seperti "minta form", "kasih form daftarnya", atau "saya mau isi data sekarang".
     """
 
 # =====================================================================
-# 6. FUNGSI PANGGIL AI (DILENGKAPI MEMORI)
+# 5. FUNGSI PANGGIL AI (DILENGKAPI MEMORI OBROLAN)
 # =====================================================================
 def call_groq(user_msg, history=[]):
     if not GROQ_API_KEY: return None
     try:
         headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
-        
-        # 1. Masukkan System Prompt (Otak Utama)
         messages = [{"role": "system", "content": get_system_prompt()}]
         
-        # 2. Masukkan Riwayat Obrolan Sebelumnya (Memori)
-        for h in history:
+        # PERBAIKAN: Buang pesan awal jika diawali oleh Assistant
+        safe_history = list(history)
+        while len(safe_history) > 0 and safe_history[0]["role"] == "assistant":
+            safe_history.pop(0)
+
+        for h in safe_history: 
             messages.append({"role": h["role"], "content": h["content"]})
             
-        # 3. Masukkan Pertanyaan Terbaru
         messages.append({"role": "user", "content": user_msg})
 
-        payload = {
-            "model": "llama-3.1-8b-instant",
-            "messages": messages,
-            "temperature": 0.2
-        }
-        resp = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=5)
+        payload = {"model": "llama-3.1-8b-instant", "messages": messages, "temperature": 0.2}
+        resp = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=8)
         
-        if resp.status_code == 200:
+        if resp.status_code == 200: 
             return resp.json()['choices'][0]['message']['content']
-        elif resp.status_code == 429:
+        elif resp.status_code == 429: 
             logger.warning("⚠️ GROQ LIMIT HABIS (429)! Pindah ke Gemini...")
             return None 
-        else:
+        else: 
+            logger.error(f"❌ Groq API Error ({resp.status_code}): {resp.text}") # Munculkan error di terminal
             return None
-    except Exception as e:
-        logger.error(f"Groq Connection Error: {e}")
+    except Exception as e: 
+        logger.error(f"❌ Groq Request Error: {e}")
         return None
 
 def call_gemini(user_msg, history=[]):
-    if not GEMINI_API_KEY: return "Mohon maaf, server sedang sibuk. Silakan coba beberapa saat lagi."
+    if not GEMINI_API_KEY: return "Mohon maaf, server sedang sibuk."
     try:
-        # Konfigurasi Gemini 1.5 dengan System Prompt bawaan
         generation_config = genai.types.GenerationConfig(temperature=0.2)
-        model = genai.GenerativeModel(
-            "gemini-1.5-flash", 
-            generation_config=generation_config,
-            system_instruction=get_system_prompt() # Masukkan aturan ke sistem
-        )
+        model = genai.GenerativeModel("gemini-1.5-flash", generation_config=generation_config, system_instruction=get_system_prompt())
         
-        # Format history untuk Gemini (user dan model)
         gemini_history = []
         for h in history:
             role = "user" if h["role"] == "user" else "model"
-            # Bersihkan tag HTML <b> atau <br> dari history agar AI tidak bingung
-            clean_content = re.sub(r'<[^>]+>', '', h["content"])
-            gemini_history.append({"role": role, "parts": [clean_content]})
+            clean_content = re.sub(r'<[^>]+>', '', str(h.get("content", ""))).strip()
+            if clean_content:
+                gemini_history.append({"role": role, "parts": [clean_content]})
 
-        # Mulai sesi chat dengan memori
+        # PERBAIKAN FATAL: Gemini API wajib diawali oleh User! 
+        while len(gemini_history) > 0 and gemini_history[0]["role"] == "model":
+            gemini_history.pop(0)
+
         chat = model.start_chat(history=gemini_history)
-        resp = chat.send_message(user_msg)
-        return resp.text
-    except Exception as e:
-        logger.error(f"Gemini Error: {e}")
-        return "Mohon maaf, seluruh server sedang sibuk. Silakan coba kembali nanti."
+        return chat.send_message(user_msg).text
+    except Exception as e: 
+        logger.error(f"❌ Gemini Error: {e}") # Munculkan error asli di terminal
+        return "Mohon maaf, seluruh server sedang sibuk."
 
 # =====================================================================
-# 7. ROUTING API (MENERIMA PAYLOAD HISTORY)
+# 6. ROUTING API UTAMA
 # =====================================================================
 @app.route("/chat", methods=["POST"])
 def chat():
     data = request.json
     user_msg = data.get("message")
-    chat_history = data.get("history", []) # Menangkap riwayat dari Next.js
+    chat_history = data.get("history", []) 
     
     if not user_msg: return jsonify({"error": "Pesan kosong"}), 400
 
-    # Lempar pesan + memori ke AI
     raw_answer = call_groq(user_msg, chat_history)
-    
     if raw_answer is None:
         logger.info("🔄 Menggunakan Cadangan: Google Gemini")
         raw_answer = call_gemini(user_msg, chat_history)
     
     final_answer = format_response_html(raw_answer)
     
-    # Simpan log ke Firebase
+    # Simpan log ke Firebase secara Asynchronous (Background) agar user tidak menunggu
     if db is not None:
         try:
             db.collection("chat_logs").add({
@@ -217,6 +216,19 @@ def chat():
             logger.error(f"⚠️ Gagal menyimpan log: {e}")
 
     return jsonify({"response": final_answer})
+
+# =====================================================================
+# 7. ROUTING API UNTUK ADMIN (REFRESH CACHE MANUAL)
+# =====================================================================
+@app.route("/refresh-cache", methods=["GET"])
+def refresh_cache():
+    """Endpoint rahasia untuk mereset memori secara manual dari Dashboard"""
+    global FAQ_CACHE, LAST_FETCH_TIME
+    FAQ_CACHE = None
+    LAST_FETCH_TIME = 0
+    # Panggil fungsi agar langsung narik data baru
+    load_knowledge_base()
+    return jsonify({"status": "success", "message": "Cache berhasil dikosongkan dan diperbarui dari Firebase!"})
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
