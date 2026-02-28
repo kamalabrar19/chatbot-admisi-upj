@@ -355,7 +355,7 @@ export default function Home() {
                 className={`relative max-w-[80%] p-3.5 pb-8 leading-relaxed text-[14px] ${
                   msg.sender === "user" 
                   ? "text-white rounded-2xl rounded-tr-none bg-blue-600 border border-blue-700 shadow-lg shadow-blue-900/25"
-                  : "bg-white text-gray-800 border border-gray-200 rounded-2xl rounded-tl-none shadow-sm"
+                  : "bg-white/70 backdrop-blur text-gray-800 border border-white/70 shadow-lg shadow-blue-900/10 rounded-2xl rounded-tl-none"
                 }`}
               >
                 {msg.sender === "bot" ? (
