@@ -8,4 +8,4 @@ __pycache__/
 
 # Mengabaikan folder besar Node.js (biar upload nggak berat)
 frontend/node_modules/
-frontend/.next/
+frontend/.next/node_modules/
