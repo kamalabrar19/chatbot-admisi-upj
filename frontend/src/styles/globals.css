@@ -1,0 +1,37 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background-color: #f3f4f6; 
+  color: #1f2937; 
+}
+
+/* Kustomisasi scrollbar modern */
+::-webkit-scrollbar {
+    width: 6px;
+}
+::-webkit-scrollbar-track {
+    background: transparent; 
+}
+::-webkit-scrollbar-thumb {
+    background: #cbd5e1; 
+    border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8; 
+}
+
+/* Sembunyikan indikator scroll horizontal quick replies khusus mobile */
+@media (max-width: 640px) {
+  .mobile-scroll-hide {
+    -ms-overflow-style: none; /* IE/Edge */
+    scrollbar-width: none;    /* Firefox */
+  }
+  .mobile-scroll-hide::-webkit-scrollbar {
+    display: none;            /* Safari/Chrome */
+  }
+}

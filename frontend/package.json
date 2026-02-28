@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
+    "dev": "NEXT_DISABLE_TURBOPACK=1 next dev",
+    "build": "NEXT_DISABLE_TURBOPACK=1 next build",
     "start": "next start",
     "lint": "eslint",
     "kill-port": "npx kill-port 3000"
@@ -18,11 +18,11 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
-    "@types/node": "^20",
-    "@types/react": "^19",
+    "@types/node": "20.19.35",
+    "@types/react": "19.2.14",
     "@types/react-dom": "^19",
     "autoprefixer": "^10.4.24",
-    "eslint": "^4.0.0",
+    "eslint": "^7.32.0",
     "eslint-config-next": "^12.0.4",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.19",

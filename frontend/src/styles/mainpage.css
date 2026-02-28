@@ -1,0 +1,66 @@
+@keyframes bgPulse {
+  0% { transform: translate(-10%, -5%) scale(1); }
+  50% { transform: translate(5%, 8%) scale(1.08); }
+  100% { transform: translate(-10%, -5%) scale(1); }
+}
+@keyframes bgDrift {
+  0% { transform: translate(8%, 12%) scale(0.95); }
+  50% { transform: translate(-6%, -10%) scale(1.05); }
+  100% { transform: translate(8%, 12%) scale(0.95); }
+}
+.bg-orb {
+  position: absolute;
+  width: 70vw;
+  height: 70vw;
+  max-width: 900px;
+  max-height: 900px;
+  filter: blur(80px);
+  opacity: 0.85;
+  mix-blend-mode: screen;
+  pointer-events: none;
+  z-index: -1;
+}
+.bg-orb.red { background: radial-gradient(circle at 30% 30%, #ff4d4d, transparent 52%); animation: bgPulse 16s ease-in-out infinite; bottom: -25%; left: -12%; }
+.bg-orb.green { background: radial-gradient(circle at 70% 40%, #2ecc71, transparent 52%); animation: bgDrift 18s ease-in-out infinite; bottom: -32%; right: -15%; }
+.bg-orb.blue { background: radial-gradient(circle at 50% 50%, #3b82f6, transparent 55%); animation: bgPulse 20s ease-in-out infinite; bottom: -38%; left: 18%; }
+.bg-orb.white { background: radial-gradient(circle at 40% 60%, rgba(255,255,255,0.95), transparent 70%); animation: bgDrift 22s ease-in-out infinite; bottom: -20%; left: 5%; opacity: 0.6; }
+.bg-wash {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(255,255,255,0.82) 0%, rgba(255,255,255,0.7) 55%, rgba(255,255,255,0.85) 100%);
+  pointer-events: none;
+  z-index: -2;
+}
+@keyframes glowSpin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+.glow-border {
+  position: relative;
+  padding: 3px;
+  overflow: hidden;
+  border-radius: 9999px;
+}
+.glow-border::before {
+  content: "";
+  position: absolute;
+  inset: -20%;
+  background: conic-gradient(#ff3b30, #34c759, #0a84ff, #ff3b30);
+  animation: glowSpin 6s linear infinite;
+  opacity: 0.95;
+  filter: blur(4px);
+}
+.glow-border::after {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  background: rgba(255, 255, 255, 0.78);
+}
+.glow-border > * {
+  position: relative;
+  z-index: 1;
+}
+.glow-border::before,
+.glow-border::after {
+  border-radius: 9999px;
+}
