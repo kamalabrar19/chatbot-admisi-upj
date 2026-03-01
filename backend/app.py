@@ -5,7 +5,7 @@ import os
 import json
 import logging
 import re
-import time # <-- TAMBAHAN BARU UNTUK WAKTU CACHE
+import time
 from dotenv import load_dotenv
 import google.generativeai as genai
 
