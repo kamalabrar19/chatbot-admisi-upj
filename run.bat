@@ -6,7 +6,7 @@ echo.
 
 :: 1. Menjalankan Backend Python di jendela baru
 echo [1/2] Menyalakan Backend (Flask) di port 5000...
-start "Backend Flask" cmd /k "cd chatbot_admisi && python app.py"
+start "Backend Flask" cmd /k "cd backend && python app.py"
 
 :: 2. Menjalankan Frontend Next.js di jendela baru
 echo [2/2] Menyalakan Frontend (Next.js) di port 3000...

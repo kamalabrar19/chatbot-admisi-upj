@@ -94,7 +94,7 @@ export default function DashboardPage() {
     }
   };
 
-  const handleFileUpload = async () => {
+const handleFileUpload = async () => {
     if (!file) return;
     setIsUploading(true);
     try {
@@ -105,14 +105,36 @@ export default function DashboardPage() {
       const jsonData: any[] = XLSX.utils.sheet_to_json(sheet);
 
       const batch = writeBatch(db);
+      let count = 0; // Untuk menghitung jumlah data yang valid
+
       jsonData.forEach((row) => {
-        const docRef = doc(collection(db, "faq"));
-        batch.set(docRef, { q: row.pertanyaan || row.q, a: row.jawaban || row.a });
+        // 1. Ambil data dengan menoleransi berbagai format nama kolom (Besar/Kecil)
+        // 2. WAJIB tambahkan || "" di akhir agar nilainya JANGAN PERNAH undefined
+        const pertanyaan = row.Pertanyaan || row.pertanyaan || row.Q || row.q || "";
+        const jawaban = row.Jawaban || row.jawaban || row.A || row.a || "";
+
+        // 3. Hanya simpan ke Firebase JIKA pertanyaan dan jawaban tidak kosong
+        // Ini mencegah baris kosong di Excel ikut ter-upload
+        if (String(pertanyaan).trim() !== "" && String(jawaban).trim() !== "") {
+          const docRef = doc(collection(db, "faq"));
+          // Bungkus dengan String() untuk jaga-jaga kalau ada isi Excel berupa angka
+          batch.set(docRef, { 
+            q: String(pertanyaan).trim(), 
+            a: String(jawaban).trim() 
+          });
+          count++;
+        }
       });
 
-      await batch.commit();
-      setStatus({ type: "success", message: "Upload berhasil." });
-      fetchData();
+      // 4. Pastikan batch hanya di-commit jika ada data yang valid
+      if (count > 0) {
+        await batch.commit();
+        setStatus({ type: "success", message: `Upload ${count} data berhasil.` });
+        fetchData();
+      } else {
+        setStatus({ type: "error", message: "Gagal: Format kolom tidak sesuai atau Excel kosong." });
+      }
+
     } catch (error) {
       console.error("Error uploading file: ", error);
       setStatus({ type: "error", message: "Gagal upload." });
