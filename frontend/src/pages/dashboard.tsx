@@ -65,9 +65,10 @@ export default function DashboardPage() {
     }
   };
 
+  // PERBAIKAN: Redirect langsung ke mainpage setelah logout
   const handleLogout = async () => {
     await signOut(auth);
-    router.push("/login");
+    router.push("/mainpage");
   };
 
   const addFAQ = async () => {
@@ -216,7 +217,6 @@ export default function DashboardPage() {
     XLSX.writeFile(wb, "leads_export.xlsx");
   };
 
-  // FITUR BARU: EXPORT INSIGHT & OVERVIEW
   const exportAnalyticsToExcel = () => {
     const overviewData = [
       { Metrik: "Total Calon Mahasiswa (Leads)", Nilai: totalLeads },
@@ -294,10 +294,21 @@ export default function DashboardPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
               </svg>
             </button>
-            <div className="hidden sm:flex flex-col items-end leading-tight">
-              <span className="text-sm font-semibold text-blue-900">{user.email}</span>
-              <span className="text-[11px] text-gray-500">Super Admin</span>
+            
+
+            <div className="hidden sm:flex items-center gap-4 border-l border-gray-200 pl-4">
+              <div className="flex flex-col items-end leading-tight">
+                <span className="text-sm font-semibold text-blue-900">{user.email}</span>
+                <span className="text-[11px] text-gray-500">Super Admin</span>
+              </div>
+              <button
+                onClick={handleLogout}
+                className="px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700 rounded-lg text-sm font-bold transition-colors"
+              >
+                Keluar
+              </button>
             </div>
+
           </div>
         </div>
         {menuOpen && (

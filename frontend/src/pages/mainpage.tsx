@@ -290,8 +290,8 @@ export default function Home() {
                 <div className="flex items-center gap-2 mb-4">
                   <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-blue-50 text-blue-700 text-sm font-bold">i</span>
                   <div>
-                    <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide mb-0">Data Cepat</p>
-                    <p className="text-sm text-gray-700 m-0">Isi 30 detik, tim Admisi bisa hubungi kamu.</p>
+                    <p className="text-xs font-semibold text-blue-700 tracking-wide mb-0">Halo kak, kira kira kakaknya minat masuk jurusan apa?</p>
+                    <p className="text-sm text-gray-700 m-0">Yuk, lengkapi form di bawah ini dan klaim potongan biaya pendaftaranmu sekarang! 🚀</p>
                   </div>
                 </div>
                 <form onSubmit={handleLeadSubmit} className="space-y-4">
