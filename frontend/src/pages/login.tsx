@@ -6,9 +6,11 @@ import { auth, googleProvider } from "../lib/firebase";
 import { useRouter } from "next/navigation";
 
 const ALLOWED_EMAILS = [
-  "email.kamu@gmail.com", 
+  "kamalabrar19@gmail.com", 
   "dummymarius@gmail.com",
-  "rizkynath543@gmail.com"
+  "rizkynath543@gmail.com",
+  "abrar081281670008@gmail.com",
+  ""
 ];
 
 export default function LoginPage() {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { auth, db } from "../lib/firebase";
 import { onAuthStateChanged, signOut } from "firebase/auth";
@@ -8,7 +8,6 @@ import { collection, getDocs, addDoc, deleteDoc, doc, writeBatch, query, orderBy
 import * as XLSX from "xlsx";
 import styles from "../styles/dashboard.module.css";
 import Head from "next/head";
-import { useMemo } from "react";
 
 interface FAQ { id: string; q: string; a: string; }
 interface ChatLog { id: string; user_message: string; bot_response: string; timestamp: any; }
@@ -94,7 +93,7 @@ export default function DashboardPage() {
     }
   };
 
-const handleFileUpload = async () => {
+  const handleFileUpload = async () => {
     if (!file) return;
     setIsUploading(true);
     try {
@@ -105,19 +104,14 @@ const handleFileUpload = async () => {
       const jsonData: any[] = XLSX.utils.sheet_to_json(sheet);
 
       const batch = writeBatch(db);
-      let count = 0; // Untuk menghitung jumlah data yang valid
+      let count = 0; 
 
       jsonData.forEach((row) => {
-        // 1. Ambil data dengan menoleransi berbagai format nama kolom (Besar/Kecil)
-        // 2. WAJIB tambahkan || "" di akhir agar nilainya JANGAN PERNAH undefined
         const pertanyaan = row.Pertanyaan || row.pertanyaan || row.Q || row.q || "";
         const jawaban = row.Jawaban || row.jawaban || row.A || row.a || "";
 
-        // 3. Hanya simpan ke Firebase JIKA pertanyaan dan jawaban tidak kosong
-        // Ini mencegah baris kosong di Excel ikut ter-upload
         if (String(pertanyaan).trim() !== "" && String(jawaban).trim() !== "") {
           const docRef = doc(collection(db, "faq"));
-          // Bungkus dengan String() untuk jaga-jaga kalau ada isi Excel berupa angka
           batch.set(docRef, { 
             q: String(pertanyaan).trim(), 
             a: String(jawaban).trim() 
@@ -126,7 +120,6 @@ const handleFileUpload = async () => {
         }
       });
 
-      // 4. Pastikan batch hanya di-commit jika ada data yang valid
       if (count > 0) {
         await batch.commit();
         setStatus({ type: "success", message: `Upload ${count} data berhasil.` });
@@ -141,25 +134,6 @@ const handleFileUpload = async () => {
     } finally {
       setIsUploading(false);
     }
-  };
-
-  const exportToExcel = () => {
-    const ws = XLSX.utils.json_to_sheet(faqs.map(({ q, a }) => ({ pertanyaan: q, jawaban: a })));
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "FAQ");
-    XLSX.writeFile(wb, "faq_export.xlsx");
-  };
-
-  const exportLeadsToExcel = () => {
-    const ws = XLSX.utils.json_to_sheet(leads.map(({ nama, whatsapp, minat_jurusan, waktu_daftar }) => ({
-      nama,
-      whatsapp,
-      minat_jurusan,
-      waktu_daftar: waktu_daftar?.toDate ? waktu_daftar.toDate().toISOString() : "",
-    })));
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Leads");
-    XLSX.writeFile(wb, "leads_export.xlsx");
   };
 
   const deleteChatLog = async (id: string) => {
@@ -183,6 +157,9 @@ const handleFileUpload = async () => {
     }
   };
 
+  // ==========================================
+  // KALKULASI STATISTIK & INSIGHT
+  // ==========================================
   const totalFaqs = faqs.length;
   const totalLeads = leads.length;
   const totalLogs = chatLogs.length;
@@ -211,6 +188,65 @@ const handleFileUpload = async () => {
   const sortedDays = Object.keys(logsByDay).sort().slice(-7);
   const maxLogCount = Math.max(1, ...sortedDays.map((d) => logsByDay[d]));
 
+  const sparklinePoints = sortedDays.map((d, idx) => {
+    const x = (idx / Math.max(sortedDays.length - 1, 1)) * 100;
+    const y = 40 - (logsByDay[d] / maxLogCount) * 40;
+    return `${x},${y}`;
+  }).join(" ");
+
+  // ==========================================
+  // FITUR EXPORT EXCEL
+  // ==========================================
+  const exportToExcel = () => {
+    const ws = XLSX.utils.json_to_sheet(faqs.map(({ q, a }) => ({ pertanyaan: q, jawaban: a })));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "FAQ");
+    XLSX.writeFile(wb, "faq_export.xlsx");
+  };
+
+  const exportLeadsToExcel = () => {
+    const ws = XLSX.utils.json_to_sheet(leads.map(({ nama, whatsapp, minat_jurusan, waktu_daftar }) => ({
+      nama,
+      whatsapp,
+      minat_jurusan,
+      waktu_daftar: waktu_daftar?.toDate ? waktu_daftar.toDate().toISOString() : "",
+    })));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Leads");
+    XLSX.writeFile(wb, "leads_export.xlsx");
+  };
+
+  // FITUR BARU: EXPORT INSIGHT & OVERVIEW
+  const exportAnalyticsToExcel = () => {
+    const overviewData = [
+      { Metrik: "Total Calon Mahasiswa (Leads)", Nilai: totalLeads },
+      { Metrik: "Jumlah Variasi Jurusan Diminati", Nilai: uniqueMajors.length },
+      { Metrik: "Total FAQ Terdaftar", Nilai: totalFaqs },
+      { Metrik: "Total Riwayat Chat (Tersimpan)", Nilai: totalLogs },
+      { Metrik: "Jurusan Paling Diminati", Nilai: topMajor },
+    ];
+    const wsOverview = XLSX.utils.json_to_sheet(overviewData);
+
+    const leadsByMajorData = Object.entries(leadByMajor).map(([jurusan, jumlah]) => ({
+      Jurusan: jurusan,
+      "Jumlah Leads": jumlah
+    }));
+    const wsLeadsByMajor = XLSX.utils.json_to_sheet(leadsByMajorData);
+
+    const chatsByDayData = Object.entries(logsByDay).map(([tanggal, jumlah]) => ({
+      Tanggal: tanggal,
+      "Jumlah Chat": jumlah
+    }));
+    const wsChatsByDay = XLSX.utils.json_to_sheet(chatsByDayData);
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, wsOverview, "Overview");
+    XLSX.utils.book_append_sheet(wb, wsLeadsByMajor, "Distribusi Jurusan");
+    XLSX.utils.book_append_sheet(wb, wsChatsByDay, "Aktivitas Chat");
+
+    XLSX.writeFile(wb, "laporan_analytics_admisi.xlsx");
+  };
+
   const filteredLeads = useMemo(() => {
     if (!leadSearch.trim()) return leads;
     const term = leadSearch.toLowerCase();
@@ -221,12 +257,6 @@ const handleFileUpload = async () => {
         l.minat_jurusan?.toLowerCase().includes(term)
     );
   }, [leadSearch, leads]);
-
-  const sparklinePoints = sortedDays.map((d, idx) => {
-    const x = (idx / Math.max(sortedDays.length - 1, 1)) * 100;
-    const y = 40 - (logsByDay[d] / maxLogCount) * 40;
-    return `${x},${y}`;
-  }).join(" ");
 
   const sections = [
     { id: "overview", label: "Overview" },
@@ -315,8 +345,13 @@ const handleFileUpload = async () => {
         <main className={styles.main}>
           <section id="overview" className={styles.card}>
             <div className={styles.cardHeader}>
-              <h2>Overview</h2>
-              <span className={styles.subtle}>Ringkasan cepat</span>
+              <div>
+                <h2>Overview</h2>
+                <span className={styles.subtle}>Ringkasan cepat performa chatbot</span>
+              </div>
+              <button onClick={exportAnalyticsToExcel} className={`${styles.btn} ${styles.btnSuccess}`}>
+                Export Insight (.xlsx)
+              </button>
             </div>
             <div className={styles.gridCards}>
               <div className={styles.statCard}>
