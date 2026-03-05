@@ -420,11 +420,11 @@ export default function Home() {
           <div className={`${styles.glowBorder} flex-1 rounded-full`}>
             <div className="relative">
               <input
-                type="text"
-                id="chat_prompt"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                disabled={isLoading}
+                type="text" 
+                value={input} 
+                onChange={(e) => setInput(e.target.value)} 
+                disabled={isLoading} 
+                maxLength={500} 
                 placeholder="Ketik pesan di sini..."
                 className="relative z-10 block w-full p-3.5 text-[14px] bg-white/80 backdrop-blur rounded-full border border-gray-200 appearance-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-200 transition-all shadow placeholder:text-gray-500 hover:border-blue-300 hover:shadow-md"
               />
