@@ -9,9 +9,13 @@ import logging
 import re
 import time
 from dotenv import load_dotenv
-import google.generativeai as genai
+from bs4 import BeautifulSoup
 import firebase_admin
 from firebase_admin import credentials, firestore
+
+# --- IMPORT KEDUA VERSI GEMINI ---
+import google.generativeai as genai          # SDK Lama (Untuk fitur Chat Utama)
+from google import genai as genai_new        # SDK Baru (Untuk fitur Auto-Scraper)
 
 # =====================================================================
 # 1. KONFIGURASI AWAL & DATABASE
@@ -25,10 +29,13 @@ app = Flask(__name__)
 # --- KUNCI API ---
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-ADMIN_SECRET_TOKEN = os.getenv("ADMIN_SECRET_TOKEN", "rahasiaupj123") # Password darurat untuk Admin
+ADMIN_SECRET_TOKEN = os.getenv("ADMIN_SECRET_TOKEN", "rahasiaupj123") 
 
+# Inisialisasi API Gemini (Kedua versi dihidupkan)
+GEMINI_CLIENT = None
 if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+    genai.configure(api_key=GEMINI_API_KEY) # Konfigurasi SDK Lama
+    GEMINI_CLIENT = genai_new.Client(api_key=GEMINI_API_KEY) # Client SDK Baru
 
 # --- KONEKSI FIREBASE ---
 try:
@@ -46,11 +53,9 @@ except Exception as e:
 # 2. SISTEM KEAMANAN (CORS & RATE LIMITING)
 # =====================================================================
 ALLOWED_ORIGINS = [
-    "http://localhost:3000",        # Untuk ngoding lokal
+    "http://localhost:3000",        
     "http://127.0.0.1:3000",
-    "192.168.1.8:3000",                # Alternatif localhost
-    # "https://frontend-chatbot-upj.vercel.app", # Buka kalau sudah di Vercel
-    # "https://admisi-ai.upj.ac.id",             # Buka kalau sudah pakai domain kampus
+    "http://192.168.1.8:3000",      
 ]
 
 CORS(app, resources={
@@ -64,7 +69,7 @@ CORS(app, resources={
 limiter = Limiter(
     get_remote_address,
     app=app,
-    default_limits=["500 per day", "70 per hour"], # Batas wajar harian/jam
+    default_limits=["500 per day", "70 per hour"], 
     storage_uri="memory://" 
 )
 
@@ -96,7 +101,7 @@ def load_knowledge_base():
     if db is None: return base_data
 
     try:
-        faqs_ref = db.collection("faq") # Menggunakan collection "faq" sesuai frontend
+        faqs_ref = db.collection("faq") 
         docs = faqs_ref.stream()
         
         faqs = []
@@ -118,7 +123,7 @@ def load_knowledge_base():
 
 
 # =====================================================================
-# 4. FORMATTER, SYSTEM PROMPT, KONFIGURASI PROMPT RULES *ada di prompt_rules.txt
+# 4. FORMATTER & SYSTEM PROMPT
 # =====================================================================
 def format_response_html(text):
     if not text: return ""
@@ -141,22 +146,19 @@ def get_system_prompt():
     data_str = json.dumps(current_data, ensure_ascii=False)
     
     try:
-        # Mencari lokasi file prompt_rules.txt yang sejajar dengan app.py
         base_dir = os.path.dirname(os.path.abspath(__file__))
         prompt_path = os.path.join(base_dir, "prompt_rules.txt")
         
-        # Membaca isi file txt
         with open(prompt_path, "r", encoding="utf-8") as file:
             prompt_template = file.read()
             
-        # Menyuntikkan data FAQ dari Firebase ke bagian {knowledge_base}
         final_prompt = prompt_template.replace("{knowledge_base}", data_str)
         return final_prompt
         
     except Exception as e:
         logger.error(f"❌ Gagal membaca prompt_rules.txt: {e}")
-        # Sistem Cadangan (Fallback) jika file txt tidak sengaja terhapus
         return f"PERAN: Asisten Virtual Admisi UPJ.\nDATA: {data_str}"
+
 
 # =====================================================================
 # 5. FUNGSI PANGGIL AI
@@ -253,12 +255,10 @@ def chat():
 
 
 # =====================================================================
-# 7. ROUTING API UNTUK ADMIN
+# 7. ROUTING API UNTUK ADMIN (REFRESH CACHE)
 # =====================================================================
 @app.route("/refresh-cache", methods=["GET"])
 def refresh_cache():
-    """Endpoint untuk mereset memori secara manual dari Dashboard"""
-    # FITUR KEAMANAN BARU: Wajib pakai token!
     token = request.args.get("token")
     if token != ADMIN_SECRET_TOKEN:
         logger.warning("🚨 Upaya akses tanpa izin ke /refresh-cache ditolak!")
@@ -271,5 +271,68 @@ def refresh_cache():
     
     return jsonify({"status": "success", "message": "Cache berhasil dikosongkan dan diperbarui dari Firebase!"})
 
+
+# =====================================================================
+# 8. ROUTING API UNTUK AUTO-SCRAPER (PREVIEW MODE)
+# =====================================================================
+@app.route("/api/scrape", methods=["POST"])
+def api_scrape():
+    # 1. Amankan endpoint ini khusus Admin
+    token = request.headers.get("Authorization")
+    if token != f"Bearer {ADMIN_SECRET_TOKEN}":
+        return jsonify({"error": "Akses Ditolak!"}), 401
+
+    data = request.json
+    target_url = data.get("url")
+    
+    if not target_url:
+        return jsonify({"error": "URL tidak boleh kosong"}), 400
+
+    logger.info(f"🌍 Menerima request scraping untuk URL: {target_url}")
+
+    try:
+        # 2. Proses Menyedot Website
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        response = requests.get(target_url, headers=headers)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        paragraphs = soup.find_all(['p', 'h1', 'h2', 'h3', 'li'])
+        raw_text = " ".join([p.get_text(strip=True) for p in paragraphs])
+
+        if not raw_text or len(raw_text) < 100:
+            return jsonify({"error": "Gagal mengambil teks atau teks terlalu pendek."}), 400
+
+        # 3. Proses Merangkum dengan Gemini
+        prompt = f"""
+        Kamu adalah pembuat FAQ profesional. Baca teks informasi kampus berikut:
+        ---
+        {raw_text[:20000]}
+        ---
+        Ekstrak informasi penting di atas menjadi pasangan Pertanyaan dan Jawaban (FAQ) untuk calon mahasiswa.
+        Keluarkan HANYA dalam format JSON Array yang valid persis seperti format ini:
+        [
+          {{"q": "Pertanyaan 1", "a": "Jawaban 1"}}
+        ]
+        TIDAK BOLEH ADA TEKS LAIN SELAIN JSON! JANGAN gunakan blok kode markdown.
+        """
+        
+        ai_response = GEMINI_CLIENT.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt,
+        )
+        
+        # 4. Bersihkan dan kembalikan ke Frontend (TIDAK DI-SAVE KE FIREBASE)
+        clean_json = ai_response.text.replace("```json", "").replace("```", "").strip()
+        faqs = json.loads(clean_json)
+        
+        return jsonify({"status": "success", "data": faqs})
+
+    except Exception as e:
+        logger.error(f"❌ Error Scraper API: {e}")
+        return jsonify({"error": f"Terjadi kesalahan saat memproses data: {str(e)}"}), 500
+
+
+# =====================================================================
+# 9. JALANKAN SERVER (HARUS DI PALING BAWAH!)
+# =====================================================================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", debug=True, port=5000)

@@ -30,6 +30,15 @@ export default function DashboardPage() {
   const [isUploading, setIsUploading] = useState(false);
   const [leadSearch, setLeadSearch] = useState("");
 
+  // ==========================================
+  // STATE KHUSUS AUTO-SCRAPER AI
+  // ==========================================
+  const [scrapeUrl, setScrapeUrl] = useState("");
+  const [isScraping, setIsScraping] = useState(false);
+  const [isSavingScrape, setIsSavingScrape] = useState(false);
+  const [previewData, setPreviewData] = useState<{ q: string; a: string }[]>([]);
+  const [scrapeStatus, setScrapeStatus] = useState({ type: "", text: "" });
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       if (!currentUser) router.push("/login");
@@ -65,7 +74,6 @@ export default function DashboardPage() {
     }
   };
 
-  // PERBAIKAN: Redirect langsung ke mainpage setelah logout
   const handleLogout = async () => {
     await signOut(auth);
     router.push("/mainpage");
@@ -155,6 +163,86 @@ export default function DashboardPage() {
       setChatLogs([]);
     } catch (error) {
       console.error("Error deleting all chat logs: ", error);
+    }
+  };
+
+  // ==========================================
+  // LOGIKA AUTO-SCRAPER AI
+  // ==========================================
+  const handleScrape = async () => {
+    if (!scrapeUrl) return alert("Masukkan URL dulu, Kak!");
+    setIsScraping(true);
+    setScrapeStatus({ type: "info", text: "🤖 Sedang menyedot web & menyuruh AI berpikir..." });
+
+    try {
+      const response = await fetch("http://localhost:5000/api/scrape", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${process.env.NEXT_PUBLIC_ADMIN_SECRET_TOKEN}`
+        },
+        body: JSON.stringify({ url: scrapeUrl }),
+      });
+
+      const result = await response.json();
+
+      if (response.ok && result.status === "success") {
+        setPreviewData(result.data);
+        setScrapeStatus({ type: "success", text: `✨ Berhasil menemukan ${result.data.length} FAQ! Silakan kurasi di bawah.` });
+      } else {
+        setScrapeStatus({ type: "error", text: result.error || "Gagal melakukan scraping." });
+      }
+    } catch (error) {
+      console.error(error);
+      setScrapeStatus({ type: "error", text: "Gagal menghubungi server Backend Python." });
+    } finally {
+      setIsScraping(false);
+    }
+  };
+
+  const handleEditScrape = (index: number, field: "q" | "a", value: string) => {
+    const newData = [...previewData];
+    newData[index][field] = value;
+    setPreviewData(newData);
+  };
+
+  const handleDeleteScrapeRow = (index: number) => {
+    const newData = previewData.filter((_, i) => i !== index);
+    setPreviewData(newData);
+  };
+
+  const handleSaveScrapeToFirestore = async () => {
+    if (previewData.length === 0) return alert("Tidak ada data untuk disimpan!");
+    setIsSavingScrape(true);
+    setScrapeStatus({ type: "info", text: "💾 Sedang menyimpan ke Database..." });
+
+    try {
+      const faqCollection = collection(db, "faq"); 
+      const batch = writeBatch(db);
+      let count = 0;
+      
+      for (const item of previewData) {
+        if (item.q.trim() !== "" && item.a.trim() !== "") {
+          const docRef = doc(faqCollection);
+          batch.set(docRef, { q: item.q.trim(), a: item.a.trim() });
+          count++;
+        }
+      }
+      
+      if (count > 0) {
+        await batch.commit();
+        setScrapeStatus({ type: "success", text: `🎉 SUKSES! ${count} FAQ berhasil masuk ke Firestore!` });
+        setPreviewData([]); 
+        setScrapeUrl("");
+        fetchData(); // Refresh tabel FAQ utama
+      } else {
+        setScrapeStatus({ type: "error", text: "Semua baris kosong, tidak ada yang disimpan." });
+      }
+    } catch (error) {
+      console.error(error);
+      setScrapeStatus({ type: "error", text: "❌ Gagal menyimpan ke database." });
+    } finally {
+      setIsSavingScrape(false);
     }
   };
 
@@ -261,6 +349,7 @@ export default function DashboardPage() {
   const sections = [
     { id: "overview", label: "Overview" },
     { id: "charts", label: "Insight" },
+    { id: "scraper", label: "Auto-Scraper AI" }, // MENU BARU
     { id: "faq", label: "FAQ" },
     { id: "logs", label: "Chat Logs" },
     { id: "leads", label: "Leads" },
@@ -443,6 +532,94 @@ export default function DashboardPage() {
                 )}
               </div>
             </div>
+          </section>
+
+          {/* ========================================== */}
+          {/* SECTION BARU: AUTO-SCRAPER AI */}
+          {/* ========================================== */}
+          <section id="scraper" className={styles.card}>
+            <div className={styles.cardHeader}>
+              <div>
+                <h2>Auto-Scraper AI</h2>
+                <span className={styles.subtle}>Sedot info dari website kampus jadi FAQ</span>
+              </div>
+            </div>
+            
+            <div className="p-4 border border-gray-100 rounded-lg bg-white mb-4 shadow-sm">
+              <label className="block text-sm font-semibold text-gray-700 mb-2">URL Target (Contoh: https://upj.ac.id/tentang-kami)</label>
+              <div className="flex gap-3">
+                <input
+                  type="url"
+                  value={scrapeUrl}
+                  onChange={(e) => setScrapeUrl(e.target.value)}
+                  placeholder="Masukkan link website..."
+                  className="flex-1 p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+                />
+                <button
+                  onClick={handleScrape}
+                  disabled={isScraping}
+                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-5 rounded transition-all disabled:opacity-50 text-sm whitespace-nowrap"
+                >
+                  {isScraping ? "Menyedot..." : "Mulai Scrape"}
+                </button>
+              </div>
+
+              {scrapeStatus.text && (
+                <div className={`mt-3 p-2 rounded text-sm font-medium ${scrapeStatus.type === "error" ? "bg-red-100 text-red-700" : scrapeStatus.type === "success" ? "bg-green-100 text-green-700" : "bg-blue-100 text-blue-700"}`}>
+                  {scrapeStatus.text}
+                </div>
+              )}
+            </div>
+
+            {previewData.length > 0 && (
+              <div className="border border-blue-100 rounded-lg bg-blue-50 p-4">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-md font-bold text-blue-900">Tabel Kurasi (Preview)</h3>
+                  <button
+                    onClick={handleSaveScrapeToFirestore}
+                    disabled={isSavingScrape}
+                    className="bg-green-600 hover:bg-green-700 text-white font-bold py-1.5 px-4 rounded text-sm transition-all disabled:opacity-50"
+                  >
+                    {isSavingScrape ? "Menyimpan..." : "ACC & Simpan ke Firestore"}
+                  </button>
+                </div>
+
+                <div className="space-y-3 max-h-96 overflow-y-auto pr-2">
+                  {previewData.map((item, index) => (
+                    <div key={index} className="flex gap-3 p-3 border border-white rounded bg-white items-start shadow-sm">
+                      <div className="font-bold text-gray-400 text-sm mt-1">#{index + 1}</div>
+                      <div className="flex-1 space-y-2">
+                        <div>
+                          <input
+                            type="text"
+                            value={item.q}
+                            onChange={(e) => handleEditScrape(index, "q", e.target.value)}
+                            className="w-full p-2 border border-gray-200 rounded focus:border-blue-500 outline-none text-black font-semibold text-sm"
+                            placeholder="Pertanyaan"
+                          />
+                        </div>
+                        <div>
+                          <textarea
+                            value={item.a}
+                            onChange={(e) => handleEditScrape(index, "a", e.target.value)}
+                            rows={2}
+                            className="w-full p-2 border border-gray-200 rounded focus:border-blue-500 outline-none text-black text-sm"
+                            placeholder="Jawaban"
+                          />
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleDeleteScrapeRow(index)}
+                        className="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-all mt-1"
+                        title="Hapus baris ini"
+                      >
+                        ❌
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </section>
 
           <section id="faq" className={styles.card}>
