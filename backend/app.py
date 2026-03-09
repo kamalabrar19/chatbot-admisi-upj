@@ -12,10 +12,8 @@ from dotenv import load_dotenv
 from bs4 import BeautifulSoup
 import firebase_admin
 from firebase_admin import credentials, firestore
-
-# --- IMPORT KEDUA VERSI GEMINI ---
-import google.generativeai as genai          # SDK Lama (Untuk fitur Chat Utama)
-from google import genai as genai_new        # SDK Baru (Untuk fitur Auto-Scraper)
+from google import genai
+from google.genai import types
 
 # =====================================================================
 # 1. KONFIGURASI AWAL & DATABASE
@@ -26,16 +24,14 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# --- KUNCI API ---
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 ADMIN_SECRET_TOKEN = os.getenv("ADMIN_SECRET_TOKEN", "rahasiaupj123") 
 
-# Inisialisasi API Gemini (Kedua versi dihidupkan)
+# Inisialisasi API Gemini
 GEMINI_CLIENT = None
 if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY) # Konfigurasi SDK Lama
-    GEMINI_CLIENT = genai_new.Client(api_key=GEMINI_API_KEY) # Client SDK Baru
+    GEMINI_CLIENT = genai.Client(api_key=GEMINI_API_KEY)
 
 # --- KONEKSI FIREBASE ---
 try:
@@ -77,7 +73,7 @@ limiter = Limiter(
 def ratelimit_handler(e):
     logger.warning("🚨 Terdeteksi Spam (Rate Limit Hit)! IP diblokir sementara.")
     return jsonify({
-        "response": "Wah, kamu nanyanya cepet banget! 😅 Mesin AI-nya butuh napas bentar nih. Tunggu sekitar satu menit lagi ya baru ketik pesan baru!"
+        "response": "Wah, nanyanya cepet banget! 😅 Mesin AI-nya butuh napas bentar nih. Tunggu sekitar satu menit lagi ya baru ketik pesan baru!"
     }), 429
 
 
@@ -93,7 +89,7 @@ def load_knowledge_base():
     current_time = time.time()
     
     if FAQ_CACHE is not None and (current_time - LAST_FETCH_TIME) < CACHE_DURATION:
-        logger.info("⚡ Mengambil data FAQ dari Cache RAM (Hemat Kuota Database!)")
+        logger.info("⚡ Mengambil data FAQ dari Cache RAM")
         return FAQ_CACHE
 
     base_data = {"organization": {"name": "UPJ"}, "faq": []}
@@ -161,59 +157,43 @@ def get_system_prompt():
 
 
 # =====================================================================
-# 5. FUNGSI PANGGIL AI
+# 5. FUNGSI PANGGIL AI (HANYA GEMINI)
 # =====================================================================
-def call_groq(user_msg, history=[]):
-    if not GROQ_API_KEY: return None
+def call_ai(user_msg, history=[]):
+    if not GEMINI_CLIENT: return "Mohon maaf, API Key belum dikonfigurasi."
     try:
-        headers = {"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"}
-        messages = [{"role": "system", "content": get_system_prompt()}]
-        
+        formatted_contents = []
+
+        # Gemini butuh riwayat yang konsisten (harus diawali user)
         safe_history = list(history)
         while len(safe_history) > 0 and safe_history[0]["role"] == "assistant":
             safe_history.pop(0)
 
-        for h in safe_history: 
-            messages.append({"role": h["role"], "content": h["content"]})
-            
-        messages.append({"role": "user", "content": user_msg})
-
-        payload = {"model": "llama-3.1-8b-instant", "messages": messages, "temperature": 0.2}
-        resp = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=8)
-        
-        if resp.status_code == 200: 
-            return resp.json()['choices'][0]['message']['content']
-        elif resp.status_code == 429: 
-            logger.warning("⚠️ GROQ LIMIT HABIS (429)! Pindah ke Gemini...")
-            return None 
-        else: 
-            logger.error(f"❌ Groq API Error ({resp.status_code}): {resp.text}")
-            return None
-    except Exception as e: 
-        logger.error(f"❌ Groq Request Error: {e}")
-        return None
-
-def call_gemini(user_msg, history=[]):
-    if not GEMINI_API_KEY: return "Mohon maaf, server sedang sibuk."
-    try:
-        generation_config = genai.types.GenerationConfig(temperature=0.2)
-        model = genai.GenerativeModel("gemini-1.5-flash", generation_config=generation_config, system_instruction=get_system_prompt())
-        
-        gemini_history = []
-        for h in history:
+        for h in safe_history:
             role = "user" if h["role"] == "user" else "model"
             clean_content = re.sub(r'<[^>]+>', '', str(h.get("content", ""))).strip()
             if clean_content:
-                gemini_history.append({"role": role, "parts": [clean_content]})
+                formatted_contents.append({"role": role, "parts": [{"text": clean_content}]})
 
-        while len(gemini_history) > 0 and gemini_history[0]["role"] == "model":
-            gemini_history.pop(0)
+        # Tambahkan pesan terbaru
+        formatted_contents.append({"role": "user", "parts": [{"text": user_msg}]})
 
-        chat = model.start_chat(history=gemini_history)
-        return chat.send_message(user_msg).text
+        # Set konfigurasi dan System Prompt
+        config = types.GenerateContentConfig(
+            system_instruction=get_system_prompt(),
+            temperature=0.2,
+        )
+
+        response = GEMINI_CLIENT.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=formatted_contents,
+            config=config
+        )
+        
+        return response.text
     except Exception as e: 
-        logger.error(f"❌ Gemini Error: {e}")
-        return "Mohon maaf, seluruh server sedang sibuk."
+        logger.error(f"❌ AI Error: {e}")
+        return "Mohon maaf, server sedang sibuk."
 
 
 # =====================================================================
@@ -233,12 +213,8 @@ def chat():
         logger.warning(f"🛡️ Serangan Payload Ditolak! Panjang: {len(user_msg)} karakter.")
         return jsonify({"response": "Maaf kak, pertanyaannya kepanjangan nih (maksimal 500 karakter). Boleh diringkas sedikit biar gampang aku pahami? 😊"})
 
-    raw_answer = call_groq(user_msg, chat_history)
-    
-    if raw_answer is None:
-        logger.info("🔄 Menggunakan Cadangan: Google Gemini")
-        raw_answer = call_gemini(user_msg, chat_history)
-    
+    # Panggil fungsi AI tunggal
+    raw_answer = call_ai(user_msg, chat_history)
     final_answer = format_response_html(raw_answer)
     
     if db is not None:
@@ -277,7 +253,6 @@ def refresh_cache():
 # =====================================================================
 @app.route("/api/scrape", methods=["POST"])
 def api_scrape():
-    # 1. Amankan endpoint ini khusus Admin
     token = request.headers.get("Authorization")
     if token != f"Bearer {ADMIN_SECRET_TOKEN}":
         return jsonify({"error": "Akses Ditolak!"}), 401
@@ -291,7 +266,6 @@ def api_scrape():
     logger.info(f"🌍 Menerima request scraping untuk URL: {target_url}")
 
     try:
-        # 2. Proses Menyedot Website
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
         response = requests.get(target_url, headers=headers)
         soup = BeautifulSoup(response.text, 'html.parser')
@@ -301,7 +275,6 @@ def api_scrape():
         if not raw_text or len(raw_text) < 100:
             return jsonify({"error": "Gagal mengambil teks atau teks terlalu pendek."}), 400
 
-        # 3. Proses Merangkum dengan Gemini
         prompt = f"""
         Kamu adalah pembuat FAQ profesional. Baca teks informasi kampus berikut:
         ---
@@ -320,7 +293,6 @@ def api_scrape():
             contents=prompt,
         )
         
-        # 4. Bersihkan dan kembalikan ke Frontend (TIDAK DI-SAVE KE FIREBASE)
         clean_json = ai_response.text.replace("```json", "").replace("```", "").strip()
         faqs = json.loads(clean_json)
         
