@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { auth, db } from "../lib/firebase";
 import { onAuthStateChanged, signOut } from "firebase/auth";
-import { collection, getDocs, addDoc, deleteDoc, doc, writeBatch, query, orderBy, limit } from "firebase/firestore";
+import { collection, getDocs, addDoc, deleteDoc, doc, writeBatch, query, orderBy, limit, updateDoc } from "firebase/firestore";
 import * as XLSX from "xlsx";
 import styles from "../styles/dashboard.module.css";
 import Head from "next/head";
@@ -29,6 +29,9 @@ export default function DashboardPage() {
   const [status, setStatus] = useState({ type: "", message: "" });
   const [isUploading, setIsUploading] = useState(false);
   const [leadSearch, setLeadSearch] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editQ, setEditQ] = useState("");
+  const [editA, setEditA] = useState("");
 
   // ==========================================
   // STATE KHUSUS AUTO-SCRAPER AI
@@ -100,6 +103,33 @@ export default function DashboardPage() {
     } catch (error) {
       console.error("Error deleting FAQ: ", error);
     }
+  };
+
+  const updateFAQ = async (id: string, updatedQ: string, updatedA: string) => {
+    if (!updatedQ.trim() || !updatedA.trim()) return;
+    try {
+      await updateDoc(doc(db, "faq", id), { q: updatedQ, a: updatedA });
+      setFaqs(faqs.map((f) => f.id === id ? { id, q: updatedQ, a: updatedA } : f));
+      setEditingId(null);
+      setEditQ("");
+      setEditA("");
+      setStatus({ type: "success", message: "FAQ berhasil diperbarui." });
+    } catch (error) {
+      console.error("Error updating FAQ: ", error);
+      setStatus({ type: "error", message: "Gagal memperbarui FAQ." });
+    }
+  };
+
+  const startEdit = (faq: FAQ) => {
+    setEditingId(faq.id);
+    setEditQ(faq.q);
+    setEditA(faq.a);
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditQ("");
+    setEditA("");
   };
 
   const handleFileUpload = async () => {
@@ -636,10 +666,59 @@ export default function DashboardPage() {
             </div>
             <div className={styles.faqGrid}>
               {faqs.map((faq) => (
-                <div key={faq.id} className={styles.faqItem}>
-                  <div className={styles.faqQuestion}>{faq.q}</div>
-                  <div className={styles.faqAnswer}>{faq.a}</div>
-                  <button onClick={() => deleteFAQ(faq.id)} className={styles.linkDanger}>Hapus</button>
+                <div key={faq.id} className={`${styles.faqItem} ${editingId === faq.id ? "border-2 border-blue-500 bg-blue-50" : ""}`}>
+                  {editingId === faq.id ? (
+                    <>
+                      <div className="space-y-2 mb-3">
+                        <input
+                          type="text"
+                          value={editQ}
+                          onChange={(e) => setEditQ(e.target.value)}
+                          className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+                          placeholder="Pertanyaan"
+                        />
+                        <textarea
+                          value={editA}
+                          onChange={(e) => setEditA(e.target.value)}
+                          className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none text-sm h-20"
+                          placeholder="Jawaban"
+                        />
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => updateFAQ(faq.id, editQ, editA)}
+                          className="flex-1 px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded text-sm font-semibold transition"
+                        >
+                          Simpan
+                        </button>
+                        <button
+                          onClick={cancelEdit}
+                          className="flex-1 px-3 py-1.5 bg-gray-400 hover:bg-gray-500 text-white rounded text-sm font-semibold transition"
+                        >
+                          Batal
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className={styles.faqQuestion}>{faq.q}</div>
+                      <div className={styles.faqAnswer}>{faq.a}</div>
+                      <div className="flex gap-2 pt-2">
+                        <button
+                          onClick={() => startEdit(faq)}
+                          className={`flex-1 ${styles.linkInfo}`}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => deleteFAQ(faq.id)}
+                          className={`flex-1 ${styles.linkDanger}`}
+                        >
+                          Hapus
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
               ))}
               {faqs.length === 0 && <p className={styles.muted}>Belum ada FAQ.</p>}
