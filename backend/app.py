@@ -118,7 +118,7 @@ def load_knowledge_base():
 
 
 # =====================================================================
-# 4. FORMATTER & SYSTEM PROMPT
+# 4. FORMATTER, SYSTEM PROMPT, KONFIGURASI PROMPT RULES *ada di prompt_rules.txt
 # =====================================================================
 def format_response_html(text):
     if not text: return ""
@@ -140,21 +140,23 @@ def get_system_prompt():
     current_data = load_knowledge_base() 
     data_str = json.dumps(current_data, ensure_ascii=False)
     
-    return f"""
-    PERAN: Asisten Virtual Admisi Universitas Pembangunan Jaya (UPJ).
-    DATA KNOWLEDGE BASE: 
-    {data_str}
-    
-    ATURAN KETAT:
-    1. DOMAIN TERBATAS: HANYA jawab pertanyaan yang BERKAITAN dengan Universitas Pembangunan Jaya (UPJ).
-    2. PENOLAKAN TOPIK LUAR: JIKA pengguna bertanya tentang topik di luar UPJ, TOLAK DENGAN HALUS.
-    3. ANTI-HALUSINASI: JANGAN PERNAH berhalusinasi atau mengarang info.
-    4. GAYA BAHASA: Selalu jawab dengan ramah, profesional, dan antusias. JANGAN menggunakan kata ganti orang kedua tunggal.
-    5. CALL TO ACTION: Pada setiap akhir jawaban, berikan ajakan mendaftar: https://pmb.upj.ac.id
-    6. KONTAK: Jika butuh konsultasi, arahkan ke: https://bit.ly/kontakupj
-    7. ATURAN FORMULIR: JANGAN PERNAH menambahkan kode [TAMPILKAN_FORM] di akhir jawaban, KECUALI pengunjung SECARA EKSPLISIT meminta formulir.
-    """
-
+    try:
+        # Mencari lokasi file prompt_rules.txt yang sejajar dengan app.py
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        prompt_path = os.path.join(base_dir, "prompt_rules.txt")
+        
+        # Membaca isi file txt
+        with open(prompt_path, "r", encoding="utf-8") as file:
+            prompt_template = file.read()
+            
+        # Menyuntikkan data FAQ dari Firebase ke bagian {knowledge_base}
+        final_prompt = prompt_template.replace("{knowledge_base}", data_str)
+        return final_prompt
+        
+    except Exception as e:
+        logger.error(f"❌ Gagal membaca prompt_rules.txt: {e}")
+        # Sistem Cadangan (Fallback) jika file txt tidak sengaja terhapus
+        return f"PERAN: Asisten Virtual Admisi UPJ.\nDATA: {data_str}"
 
 # =====================================================================
 # 5. FUNGSI PANGGIL AI
