@@ -5,13 +5,14 @@ import { signInWithPopup, signOut } from "firebase/auth";
 import { auth, googleProvider } from "../lib/firebase";
 import { useRouter } from "next/navigation";
 
-const ALLOWED_EMAILS = [
-  "kamalabrar19@gmail.com", 
-  "dummymarius@gmail.com",
-  "rizkynath543@gmail.com",
-  "abrar081281670008@gmail.com",
-  ""
-];
+const allowedEmailsString = process.env.NEXT_PUBLIC_ALLOWED_EMAILS || "";
+const ALLOWED_EMAILS = allowedEmailsString
+  .split(",")
+  .map((email) => email.trim())
+  .filter((email) => email !== "");
+
+// TAMBAHKAN BARIS INI UNTUK NGE-CEK:
+console.log("Email yang terbaca dari .env:", ALLOWED_EMAILS);
 
 export default function LoginPage() {
   const [errorMsg, setErrorMsg] = useState("");
@@ -26,6 +27,7 @@ export default function LoginPage() {
       const result = await signInWithPopup(auth, googleProvider);
       const userEmail = result.user.email;
 
+      // Cek apakah email user ada di dalam daftar ALLOWED_EMAILS dari .env
       if (userEmail && ALLOWED_EMAILS.includes(userEmail)) {
         router.push("/dashboard");
       } else {

@@ -47,7 +47,8 @@ except Exception as e:
 # =====================================================================
 ALLOWED_ORIGINS = [
     "http://localhost:3000",        # Untuk ngoding lokal
-    "http://127.0.0.1:3000",        # Alternatif localhost
+    "http://127.0.0.1:3000",
+    "192.168.1.8:3000",                # Alternatif localhost
     # "https://frontend-chatbot-upj.vercel.app", # Buka kalau sudah di Vercel
     # "https://admisi-ai.upj.ac.id",             # Buka kalau sudah pakai domain kampus
 ]
@@ -269,4 +270,4 @@ def refresh_cache():
     return jsonify({"status": "success", "message": "Cache berhasil dikosongkan dan diperbarui dari Firebase!"})
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    app.run(host="0.0.0.0", debug=True, port=5000)
