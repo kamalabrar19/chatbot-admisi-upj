@@ -7,5 +7,5 @@ __pycache__/
 *.pyc
 
 # Mengabaikan folder besar Node.js (biar upload nggak berat)
-frontend/node_modules/
+node_modules/
 frontend/.next/node_modules/
