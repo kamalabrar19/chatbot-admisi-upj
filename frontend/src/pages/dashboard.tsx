@@ -9,6 +9,13 @@ import * as XLSX from "xlsx";
 import styles from "../styles/dashboard.module.css";
 import Head from "next/head";
 
+
+interface FeedbackRecap {
+  id: string;
+  text: string;
+  isHelpful: boolean;
+  timestamp: any;
+}
 interface FAQ { id: string; q: string; a: string; }
 interface ChatLog { id: string; user_message: string; bot_response: string; timestamp: any; }
 interface Lead { id: string; nama: string; whatsapp: string; minat_jurusan: string; waktu_daftar: any; }
@@ -17,6 +24,9 @@ export default function DashboardPage() {
   const [user, setUser] = useState<any>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const router = useRouter();
+  // FEEDBACK STATE
+  const [feedbacks, setFeedbacks] = useState<FeedbackRecap[]>([]);
+  const [isLoadingFeedback, setIsLoadingFeedback] = useState(true);
 
   const [faqs, setFaqs] = useState<FAQ[]>([]);
   const [chatLogs, setChatLogs] = useState<ChatLog[]>([]);
@@ -42,16 +52,35 @@ export default function DashboardPage() {
   const [previewData, setPreviewData] = useState<{ q: string; a: string }[]>([]);
   const [scrapeStatus, setScrapeStatus] = useState({ type: "", text: "" });
 
+  // FAQ show more/less state
+  const [showAllFaqs, setShowAllFaqs] = useState(false);
+
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       if (!currentUser) router.push("/login");
       else {
         setUser(currentUser);
         fetchData();
+        fetchFeedbacks();
       }
     });
     return () => unsubscribe();
   }, [router]);
+
+  // Fetch feedback recap
+  const fetchFeedbacks = async () => {
+    setIsLoadingFeedback(true);
+    try {
+      const fbQuery = query(collection(db, "chatbot_feedback"), orderBy("timestamp", "desc"), limit(50));
+      const fbSnap = await getDocs(fbQuery);
+      setFeedbacks(fbSnap.docs.map(doc => ({ id: doc.id, ...(doc.data() as any) })));
+    } catch (e) {
+      setFeedbacks([]);
+    } finally {
+      setIsLoadingFeedback(false);
+    }
+  };
 
   const fetchData = async () => {
     setIsLoading(true);
@@ -379,7 +408,8 @@ export default function DashboardPage() {
   const sections = [
     { id: "overview", label: "Overview" },
     { id: "charts", label: "Insight" },
-    { id: "scraper", label: "Auto-Scraper AI" }, // MENU BARU
+    { id: "feedback", label: "Feedback Chatbot" },
+    { id: "scraper", label: "Auto-Scraper AI" },
     { id: "faq", label: "FAQ" },
     { id: "logs", label: "Chat Logs" },
     { id: "leads", label: "Leads" },
@@ -473,6 +503,64 @@ export default function DashboardPage() {
         </aside>
 
         <main className={styles.main}>
+          {/* FEEDBACK CHATBOT SECTION */}
+          <section id="feedback" className={styles.card}>
+            <div className={styles.cardHeader}>
+              <h2>Feedback Chatbot</h2>
+              <span className={styles.subtle}>Rekap feedback user (👍/👎)</span>
+            </div>
+            {isLoadingFeedback ? (
+              <div className="py-8 text-center text-gray-400">Memuat data feedback...</div>
+            ) : (
+              <>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                  <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 flex flex-col items-center">
+                    <span className="text-2xl font-bold text-blue-700">{feedbacks.length}</span>
+                    <span className="text-xs text-blue-900 font-semibold mt-1">Total Feedback</span>
+                  </div>
+                  <div className="bg-green-50 border border-green-100 rounded-xl p-4 flex flex-col items-center">
+                    <span className="text-2xl font-bold text-green-700">{feedbacks.filter(f => f.isHelpful).length}</span>
+                    <span className="text-xs text-green-900 font-semibold mt-1">👍 Membantu</span>
+                    <div className="w-full mt-2 h-2 bg-green-100 rounded-full overflow-hidden">
+                      <div className="bg-green-500 h-2 rounded-full" style={{ width: `${feedbacks.length ? (feedbacks.filter(f => f.isHelpful).length / feedbacks.length * 100) : 0}%` }} />
+                    </div>
+                  </div>
+                  <div className="bg-red-50 border border-red-100 rounded-xl p-4 flex flex-col items-center">
+                    <span className="text-2xl font-bold text-red-600">{feedbacks.filter(f => !f.isHelpful).length}</span>
+                    <span className="text-xs text-red-700 font-semibold mt-1">👎 Tidak Membantu</span>
+                    <div className="w-full mt-2 h-2 bg-red-100 rounded-full overflow-hidden">
+                      <div className="bg-red-500 h-2 rounded-full" style={{ width: `${feedbacks.length ? (feedbacks.filter(f => !f.isHelpful).length / feedbacks.length * 100) : 0}%` }} />
+                    </div>
+                  </div>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-xs md:text-sm border rounded-xl overflow-hidden bg-white">
+                    <thead className="bg-gray-50 border-b">
+                      <tr>
+                        <th className="px-3 py-2 text-left font-bold text-blue-900">Waktu</th>
+                        <th className="px-3 py-2 text-left font-bold text-blue-900">Jawaban Chatbot</th>
+                        <th className="px-3 py-2 text-center font-bold text-blue-900">Feedback</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {feedbacks.slice(0, 10).map(fb => (
+                        <tr key={fb.id} className="border-b last:border-0 hover:bg-blue-50/40">
+                          <td className="px-3 py-2 whitespace-nowrap text-gray-600">{fb.timestamp?.toDate?.().toLocaleString?.() || "-"}</td>
+                          <td className="px-3 py-2 max-w-xs md:max-w-md truncate text-gray-800" title={fb.text}>{fb.text}</td>
+                          <td className="px-3 py-2 text-center">
+                            {fb.isHelpful ? <span className="inline-flex items-center gap-1 text-green-700 font-bold">👍 <span className="hidden md:inline">Membantu</span></span> : <span className="inline-flex items-center gap-1 text-red-600 font-bold">👎 <span className="hidden md:inline">Tidak</span></span>}
+                          </td>
+                        </tr>
+                      ))}
+                      {feedbacks.length === 0 && (
+                        <tr><td colSpan={3} className="text-center text-gray-400 py-6">Belum ada feedback.</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </section>
           <section id="overview" className={styles.card}>
             <div className={styles.cardHeader}>
               <div>
@@ -665,7 +753,7 @@ export default function DashboardPage() {
               </div>
             </div>
             <div className={styles.faqGrid}>
-              {faqs.map((faq) => (
+              {(showAllFaqs ? faqs : faqs.slice(0, 3)).map((faq) => (
                 <div key={faq.id} className={`${styles.faqItem} ${editingId === faq.id ? "border-2 border-blue-500 bg-blue-50" : ""}`}>
                   {editingId === faq.id ? (
                     <>
@@ -723,6 +811,16 @@ export default function DashboardPage() {
               ))}
               {faqs.length === 0 && <p className={styles.muted}>Belum ada FAQ.</p>}
             </div>
+            {faqs.length > 3 && (
+              <div className="flex justify-center mt-4">
+                <button
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-semibold transition"
+                  onClick={() => setShowAllFaqs((v) => !v)}
+                >
+                  {showAllFaqs ? "Tampilkan Lebih Sedikit" : "Selengkapnya"}
+                </button>
+              </div>
+            )}
             <div className={styles.formInline}>
               <input value={newQ} onChange={(e) => setNewQ(e.target.value)} placeholder="Pertanyaan" className={styles.input} />
               <textarea value={newA} onChange={(e) => setNewA(e.target.value)} placeholder="Jawaban" className={`${styles.input} h-20`} />

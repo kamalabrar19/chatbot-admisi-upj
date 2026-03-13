@@ -8,7 +8,9 @@ import styles from "../styles/mainpage.module.css";
 interface Message {
   sender: "user" | "bot";
   text: string;
-  isForm?: boolean; 
+  isForm?: boolean;
+  feedbackGiven?: boolean;
+  feedbackHelpful?: boolean;
 }
 
 const formatBotResponse = (raw: string) => {
@@ -199,6 +201,24 @@ export default function Home() {
     }
   };
 
+  const handleFeedback = async (msgIdx: number, isHelpful: boolean) => {
+    const botMsg = messages[msgIdx];
+    if (!botMsg || botMsg.sender !== "bot") return;
+    try {
+      await addDoc(collection(db, "chatbot_feedback"), {
+        text: stripHtml(botMsg.text),
+        isHelpful,
+        timestamp: serverTimestamp(),
+      });
+      // Optional: tampilkan notifikasi atau ubah tampilan tombol setelah feedback
+      setMessages((prev) => prev.map((m, i) =>
+        i === msgIdx ? { ...m, feedbackGiven: true, feedbackHelpful: isHelpful } : m
+      ));
+    } catch (e) {
+      alert("Gagal menyimpan feedback.");
+    }
+  };
+
   return (
     <div className="flex flex-col h-screen bg-gray-50 font-['Helvetica',_Arial,_sans-serif] text-[14px] relative overflow-hidden">
       <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none">
@@ -280,13 +300,13 @@ export default function Home() {
       )}
 
       <main className="flex-1 overflow-y-auto p-4 pt-28 pb-32 flex flex-col gap-4">
+        <div className="w-full max-w-5xl mx-auto flex flex-col gap-4">
         {messages.map((msg, idx) => (
-          <div key={idx} className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}>
-            {msg.sender === "bot" && <div className="text-2xl mr-2 mt-1 drop-shadow-sm">🤖</div>}
-            
+          <div key={idx} className={`flex flex-col ${msg.sender === "user" ? "items-end" : "items-start"}`}>
+            {/* Bubble chat */}
             {msg.isForm ? (
               // BUBBLE FORMULIR (Sekarang bebas di-skip)
-              <div className="bg-white/90 backdrop-blur border border-blue-100 rounded-2xl rounded-tl-none p-6 shadow-lg max-w-[90%] sm:max-w-[70%]">
+              <div className="bg-white/90 backdrop-blur border border-blue-100 rounded-2xl rounded-tl-none p-6 shadow-lg max-w-[90vw] sm:max-w-2xl md:max-w-3xl lg:max-w-4xl xl:max-w-5xl w-full">
                 <div className="flex items-center gap-2 mb-4">
                   <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-blue-50 text-blue-700 text-sm font-bold">i</span>
                   <div>
@@ -352,37 +372,59 @@ export default function Home() {
             ) : (
               // BUBBLE TEKS BIASA
               <div
-                className={`relative max-w-[80%] p-3.5 pb-8 leading-relaxed text-[14px] ${
+                className={`relative p-3.5 pb-3 leading-relaxed text-[14px] w-full sm:w-auto ${
                   msg.sender === "user" 
-                  ? "text-white rounded-2xl rounded-tr-none bg-blue-600 border border-blue-700 shadow-lg shadow-blue-900/25"
-                  : "bg-white/70 backdrop-blur text-gray-800 border border-white/70 shadow-lg shadow-blue-900/10 rounded-2xl rounded-tl-none"
+                    ? "text-white rounded-2xl rounded-tr-none bg-blue-600 border border-blue-700 shadow-lg shadow-blue-900/25 max-w-[90vw] sm:max-w-2xl md:max-w-3xl lg:max-w-4xl xl:max-w-5xl"
+                    : "bg-white/70 backdrop-blur text-gray-800 border border-white/70 shadow-lg shadow-blue-900/10 rounded-2xl rounded-tl-none max-w-[90vw] sm:max-w-2xl md:max-w-3xl lg:max-w-4xl xl:max-w-5xl"
                 }`}
               >
                 {msg.sender === "bot" ? (
-                  <>
-                    <div
-                      className={`space-y-2 ${styles.botContent}`}
-                      dangerouslySetInnerHTML={{ __html: msg.text }}
-                    />
-                    <button
-                      onClick={() => handleCopy(msg.text, `${idx}`)}
-                      className="absolute -bottom-3 left-2 text-[11px] text-blue-700 bg-white/95 border border-blue-200 rounded-full px-2 py-1 shadow-sm hover:bg-white transition-colors"
-                      title="Salin jawaban"
-                      aria-label="Salin jawaban"
-                    >
-                      {copiedId === `${idx}` ? (
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" className="w-3.5 h-3.5 fill-current">
-                          <path d="M9.5 13.5l-2-2a.75.75 0 10-1.06 1.06l2.53 2.53a1 1 0 001.42 0l6.63-6.63a.75.75 0 00-1.06-1.06L9.5 13.5z" />
-                        </svg>
-                      ) : (
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" className="w-3.5 h-3.5 fill-current">
-                          <path d="M9 3a3 3 0 00-3 3v9a3 3 0 003 3h6a3 3 0 003-3V6a3 3 0 00-3-3H9zm0 1.5h6c.828 0 1.5.672 1.5 1.5v9c0 .828-.672 1.5-1.5 1.5H9A1.5 1.5 0 017.5 15V6A1.5 1.5 0 019 4.5zm-3 4.25a.75.75 0 00-.75.75v6.5A4 4 0 009 20.5h6a.75.75 0 000-1.5H9a2.5 2.5 0 01-2.5-2.5v-6.5a.75.75 0 00-.75-.75z"/>
-                        </svg>
-                      )}
-                    </button>
-                  </>
+                  <div
+                    className={`space-y-2 ${styles.botContent}`}
+                    dangerouslySetInnerHTML={{ __html: msg.text }}
+                  />
                 ) : (
                   <div dangerouslySetInnerHTML={{ __html: msg.text }} />
+                )}
+              </div>
+            )}
+            {/* Tombol copy & feedback di bawah bubble, rata kiri */}
+            {msg.sender === "bot" && !msg.isForm && msg.text && (
+              <div className="flex gap-2 mt-1 mb-2">
+                <button
+                  onClick={() => handleCopy(msg.text, `${idx}`)}
+                  className="text-[11px] text-blue-700 bg-white/95 border border-blue-200 rounded-full px-2 py-1 shadow-sm hover:bg-white transition-colors"
+                  title="Salin jawaban"
+                  aria-label="Salin jawaban"
+                >
+                  {copiedId === `${idx}` ? (
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" className="w-3.5 h-3.5 fill-current">
+                      <path d="M9.5 13.5l-2-2a.75.75 0 10-1.06 1.06l2.53 2.53a1 1 0 001.42 0l6.63-6.63a.75.75 0 00-1.06-1.06L9.5 13.5z" />
+                    </svg>
+                  ) : (
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" className="w-3.5 h-3.5 fill-current">
+                      <path d="M9 3a3 3 0 00-3 3v9a3 3 0 003 3h6a3 3 0 003-3V6a3 3 0 00-3-3H9zm0 1.5h6c.828 0 1.5.672 1.5 1.5v9c0 .828-.672 1.5-1.5 1.5H9A1.5 1.5 0 017.5 15V6A1.5 1.5 0 019 4.5zm-3 4.25a.75.75 0 00-.75.75v6.5A4 4 0 009 20.5h6a.75.75 0 000-1.5H9a2.5 2.5 0 01-2.5-2.5v-6.5a.75.75 0 00-.75-.75z"/>
+                    </svg>
+                  )}
+                </button>
+                {!msg.feedbackGiven && (
+                  <>
+                    <button
+                      className="text-[11px] bg-white/95 border border-blue-200 rounded-full px-2 py-1 shadow-sm hover:bg-blue-100 text-blue-700 font-bold transition-colors"
+                      onClick={() => handleFeedback(idx, true)}
+                      aria-label="Jawaban membantu"
+                      title="Jawaban membantu"
+                    >👍</button>
+                    <button
+                      className="text-[11px] bg-white/95 border border-blue-200 rounded-full px-2 py-1 shadow-sm hover:bg-red-100 text-red-600 font-bold transition-colors"
+                      onClick={() => handleFeedback(idx, false)}
+                      aria-label="Jawaban tidak membantu"
+                      title="Jawaban tidak membantu"
+                    >👎</button>
+                  </>
+                )}
+                {msg.feedbackGiven && (
+                  <span className={`text-[11px] font-bold self-center ${msg.feedbackHelpful ? 'text-blue-700' : 'text-red-600'}`}>{msg.feedbackHelpful ? '👍 Terima kasih!' : '👎 Terima kasih!'}</span>
                 )}
               </div>
             )}
@@ -390,14 +432,26 @@ export default function Home() {
         ))}
         
         {isLoading && (
-          <div className="flex items-center gap-2">
-             <div className="text-2xl drop-shadow-sm">🤖</div>
-             <div className="bg-white p-3 rounded-2xl rounded-tl-none border border-gray-200 text-gray-500 text-sm shadow-sm flex items-center gap-1">
-               <span className="animate-bounce">●</span><span className="animate-bounce delay-100">●</span><span className="animate-bounce delay-200">●</span>
-             </div>
+          <div className="w-full max-w-5xl mx-auto flex items-center gap-2">
+            <div className="flex items-center justify-center mr-2 mt-1 drop-shadow-sm">
+              {/* SVG robot icon modern */}
+              <svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect x="6" y="10" width="24" height="18" rx="8" fill="#2563eb"/>
+                <rect x="10" y="14" width="16" height="10" rx="5" fill="#fff"/>
+                <circle cx="14.5" cy="19" r="1.5" fill="#2563eb"/>
+                <circle cx="21.5" cy="19" r="1.5" fill="#2563eb"/>
+                <rect x="16" y="6" width="4" height="6" rx="2" fill="#2563eb"/>
+                <rect x="8" y="24" width="4" height="4" rx="2" fill="#2563eb"/>
+                <rect x="24" y="24" width="4" height="4" rx="2" fill="#2563eb"/>
+              </svg>
+            </div>
+            <div className="bg-white p-3 rounded-2xl rounded-tl-none border border-gray-200 text-gray-500 text-sm shadow-sm flex items-center gap-1">
+              <span className="animate-bounce">●</span><span className="animate-bounce delay-100">●</span><span className="animate-bounce delay-200">●</span>
+            </div>
           </div>
         )}
         <div ref={messagesEndRef} />
+        </div>
       </main>
 
       <div className="fixed bottom-0 left-0 right-0 z-20 px-4 pb-4">
