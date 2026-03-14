@@ -5,14 +5,14 @@ import { signInWithPopup, signOut } from "firebase/auth";
 import { auth, googleProvider } from "../lib/firebase";
 import { useRouter } from "next/navigation";
 
-const allowedEmailsString = process.env.NEXT_PUBLIC_ALLOWED_EMAILS || "";
-const ALLOWED_EMAILS = allowedEmailsString
-  .split(",")
-  .map((email) => email.trim())
-  .filter((email) => email !== "");
-
-// TAMBAHKAN BARIS INI UNTUK NGE-CEK:
-console.log("Email yang terbaca dari .env:", ALLOWED_EMAILS);
+// Memindahkan parsing env ke dalam fungsi helper agar lebih rapi
+const getAllowedEmails = () => {
+  const allowedEmailsString = process.env.NEXT_PUBLIC_ALLOWED_EMAILS || "";
+  return allowedEmailsString
+    .split(",")
+    .map((email) => email.trim())
+    .filter((email) => email !== "");
+};
 
 export default function LoginPage() {
   const [errorMsg, setErrorMsg] = useState("");
@@ -26,17 +26,24 @@ export default function LoginPage() {
     try {
       const result = await signInWithPopup(auth, googleProvider);
       const userEmail = result.user.email;
+      const allowedEmails = getAllowedEmails();
 
-      // Cek apakah email user ada di dalam daftar ALLOWED_EMAILS dari .env
-      if (userEmail && ALLOWED_EMAILS.includes(userEmail)) {
+      // Cek apakah email user ada di dalam daftar dari .env
+      if (userEmail && allowedEmails.includes(userEmail)) {
         router.push("/dashboard");
       } else {
+        // Jika tidak diizinkan, langsung keluarkan (logout)
         await signOut(auth);
         setErrorMsg(`Akses Ditolak! Email ${userEmail} tidak memiliki izin admin.`);
       }
-    } catch (error: any) {
-      setErrorMsg("Gagal melakukan login dengan Google.");
-      console.error(error);
+    } catch (error) {
+      // Penanganan error yang lebih aman
+      if (error instanceof Error) {
+        setErrorMsg(`Gagal login: ${error.message}`);
+      } else {
+        setErrorMsg("Terjadi kesalahan saat melakukan login dengan Google.");
+      }
+      console.error("Login Error:", error);
     } finally {
       setIsLoading(false);
     }
