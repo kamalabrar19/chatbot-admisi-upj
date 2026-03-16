@@ -8,4 +8,4 @@ __pycache__/
 
 # Mengabaikan folder besar Node.js (biar upload nggak berat)
 node_modules/
-frontend/.next/node_modules/
+frontend/.next/node_modules/backend/firebase-key.json
