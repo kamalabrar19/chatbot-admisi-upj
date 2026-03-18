@@ -52,6 +52,8 @@ ALLOWED_ORIGINS = [
     "http://localhost:3000",        
     "http://127.0.0.1:3000",
     "http://192.168.1.8:3000",      
+    "http://43.156.170.74.nip.io:3000",  # <-- Tambahkan alamat domain VPS Anda
+    "http://43.156.170.74:3000"          # <-- Tambahkan IP asli VPS (untuk jaga-jaga)
 ]
 
 CORS(app, resources={
