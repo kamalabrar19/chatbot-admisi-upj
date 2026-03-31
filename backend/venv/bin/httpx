@@ -1,6 +1,0 @@
-#!/mnt/IMPORTANTE/natah/PROJECTS/chatbot-admisi-upj/backend/venv/bin/python3
-import sys
-from httpx import main
-if __name__ == '__main__':
-    sys.argv[0] = sys.argv[0].removesuffix('.exe')
-    sys.exit(main())
