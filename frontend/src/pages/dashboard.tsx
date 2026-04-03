@@ -305,6 +305,12 @@ export default function DashboardPage() {
     }
   };
 
+  const handleCancelScrape = () => {
+    setScrapeUrl("");
+    setPreviewData([]);
+    setScrapeStatus({ type: "", text: "" });
+  };
+
   // ==========================================
   // KALKULASI STATISTIK & INSIGHT
   // ==========================================
@@ -679,6 +685,13 @@ export default function DashboardPage() {
                   className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-5 rounded transition-all disabled:opacity-50 text-sm whitespace-nowrap"
                 >
                   {isScraping ? "Menyedot..." : "Mulai Scrape"}
+                </button>
+                <button
+                  onClick={handleCancelScrape}
+                  disabled={isScraping}
+                  className="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-5 rounded transition-all disabled:opacity-50 text-sm whitespace-nowrap"
+                >
+                  Batal
                 </button>
               </div>
 

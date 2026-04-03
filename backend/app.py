@@ -15,6 +15,9 @@ from firebase_admin import credentials, firestore
 from google import genai
 from google.genai import types
 
+# Import auto_scraper module
+from auto_scraper import scrape_url
+
 # =====================================================================
 # 1. KONFIGURASI AWAL & DATABASE
 # =====================================================================
@@ -255,54 +258,72 @@ def refresh_cache():
 # =====================================================================
 @app.route("/api/scrape", methods=["POST"])
 def api_scrape():
+    """
+    Admin endpoint untuk scrape URL dan generate FAQ
+    Request body: {"url": "https://example.com/page"}
+    Header: Authorization: Bearer <ADMIN_SECRET_TOKEN>
+    """
     token = request.headers.get("Authorization")
     if token != f"Bearer {ADMIN_SECRET_TOKEN}":
-        return jsonify({"error": "Akses Ditolak!"}), 401
+        logger.warning("🚨 Unauthorized scrape attempt!")
+        return jsonify({"error": "Akses Ditolak! Token tidak valid."}), 401
 
     data = request.json
     target_url = data.get("url")
     
-    if not target_url:
-        return jsonify({"error": "URL tidak boleh kosong"}), 400
+    if not target_url or not isinstance(target_url, str):
+        return jsonify({"error": "URL tidak boleh kosong atau tidak valid"}), 400
+
+    if not target_url.startswith(('http://', 'https://')):
+        return jsonify({"error": "URL harus dimulai dengan http:// atau https://"}), 400
 
     logger.info(f"🌍 Menerima request scraping untuk URL: {target_url}")
 
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-        response = requests.get(target_url, headers=headers)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        paragraphs = soup.find_all(['p', 'h1', 'h2', 'h3', 'li'])
-        raw_text = " ".join([p.get_text(strip=True) for p in paragraphs])
-
-        if not raw_text or len(raw_text) < 100:
-            return jsonify({"error": "Gagal mengambil teks atau teks terlalu pendek."}), 400
-
-        prompt = f"""
-        Kamu adalah pembuat FAQ profesional. Baca teks informasi kampus berikut:
-        ---
-        {raw_text[:20000]}
-        ---
-        Ekstrak informasi penting di atas menjadi pasangan Pertanyaan dan Jawaban (FAQ) untuk calon mahasiswa.
-        Keluarkan HANYA dalam format JSON Array yang valid persis seperti format ini:
-        [
-          {{"q": "Pertanyaan 1", "a": "Jawaban 1"}}
-        ]
-        TIDAK BOLEH ADA TEKS LAIN SELAIN JSON! JANGAN gunakan blok kode markdown.
-        """
+        # Gunakan function dari auto_scraper module
+        result = scrape_url(target_url)
         
-        ai_response = GEMINI_CLIENT.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=prompt,
-        )
-        
-        clean_json = ai_response.text.replace("```json", "").replace("```", "").strip()
-        faqs = json.loads(clean_json)
-        
-        return jsonify({"status": "success", "data": faqs})
+        if result["success"]:
+            # Clear cache karena ada FAQ baru
+            global FAQ_CACHE, LAST_FETCH_TIME
+            FAQ_CACHE = None
+            LAST_FETCH_TIME = 0
+            
+            logger.info(f"✅ Scraping sukses: {len(result['faqs'])} FAQ generated")
+            
+            return jsonify({
+                "status": "success",
+                "message": result["message"],
+                "data": result["faqs"],
+                "count": len(result["faqs"]),
+                "debug": result.get("debug", "")
+            }), 200
+        else:
+            logger.warning(f"⚠️ Scraping gagal: {result.get('error', 'Unknown error')}")
+            
+            return jsonify({
+                "status": "error",
+                "message": result.get("message") or "Gagal memproses scraping",
+                "error": result.get("error"),
+                "data": [],
+                "count": 0,
+                "debug": result.get("debug", "")
+            }), 400
 
     except Exception as e:
-        logger.error(f"❌ Error Scraper API: {e}")
-        return jsonify({"error": f"Terjadi kesalahan saat memproses data: {str(e)}"}), 500
+        error_msg = str(e)
+        logger.error(f"❌ Scrape Error: {error_msg}")
+        import traceback
+        traceback.print_exc()
+        
+        return jsonify({
+            "status": "error",
+            "message": "Terjadi kesalahan saat scraping halaman",
+            "error": error_msg,
+            "data": [],
+            "count": 0,
+            "debug": f"Exception: {error_msg}"
+        }), 500
 
 
 # =====================================================================
