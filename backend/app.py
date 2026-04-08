@@ -27,11 +27,61 @@ app = Flask(__name__)
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 ADMIN_SECRET_TOKEN = os.getenv("ADMIN_SECRET_TOKEN", "rahasiaupj123") 
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 # Inisialisasi API Gemini
 GEMINI_CLIENT = None
 if GEMINI_API_KEY:
     GEMINI_CLIENT = genai.Client(api_key=GEMINI_API_KEY)
+
+def _env_file_path():
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base_dir, ".env")
+
+def _mask_secret(secret_value):
+    if not secret_value:
+        return ""
+    if len(secret_value) <= 8:
+        return "*" * len(secret_value)
+    return f"{secret_value[:4]}{'*' * (len(secret_value) - 8)}{secret_value[-4:]}"
+
+def _upsert_env_value(key, value):
+    env_path = _env_file_path()
+    lines = []
+
+    if os.path.exists(env_path):
+        with open(env_path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+
+    key_prefix = f"{key}="
+    updated = False
+    new_line = f"{key}={value}\n"
+    new_lines = []
+
+    for line in lines:
+        if line.strip().startswith(key_prefix):
+            new_lines.append(new_line)
+            updated = True
+        else:
+            new_lines.append(line)
+
+    if not updated:
+        new_lines.append(new_line)
+
+    with open(env_path, "w", encoding="utf-8") as f:
+        f.writelines(new_lines)
+
+def _reload_runtime_settings():
+    global GEMINI_API_KEY, GEMINI_CLIENT, ADMIN_SECRET_TOKEN, GEMINI_MODEL
+    load_dotenv(override=True)
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+    ADMIN_SECRET_TOKEN = os.getenv("ADMIN_SECRET_TOKEN", "rahasiaupj123")
+    GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    GEMINI_CLIENT = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+
+def _is_admin_authorized(req):
+    token = req.headers.get("Authorization", "")
+    return token == f"Bearer {ADMIN_SECRET_TOKEN}"
 
 # --- KONEKSI FIREBASE ---
 try:
@@ -185,7 +235,7 @@ def call_ai(user_msg, history=[]):
         )
 
         response = GEMINI_CLIENT.models.generate_content(
-            model='gemini-2.5-flash',
+            model=GEMINI_MODEL,
             contents=formatted_contents,
             config=config
         )
@@ -249,7 +299,63 @@ def refresh_cache():
 
 
 # =====================================================================
-# 8. ROUTING API UNTUK AUTO-SCRAPER (PREVIEW MODE)
+# 8. ROUTING API UNTUK SETTINGS ADMIN (ENV RUNTIME)
+# =====================================================================
+@app.route("/api/admin/settings", methods=["GET"])
+def get_admin_settings():
+    if not _is_admin_authorized(request):
+        return jsonify({"error": "Akses Ditolak!"}), 401
+
+    return jsonify({
+        "status": "success",
+        "data": {
+            "gemini_api_key_set": bool(GEMINI_API_KEY),
+            "gemini_api_key_masked": _mask_secret(GEMINI_API_KEY),
+            "gemini_model": GEMINI_MODEL,
+        }
+    })
+
+
+@app.route("/api/admin/settings", methods=["POST"])
+def update_admin_settings():
+    if not _is_admin_authorized(request):
+        return jsonify({"error": "Akses Ditolak!"}), 401
+
+    data = request.json or {}
+    gemini_api_key = data.get("gemini_api_key")
+    gemini_model = data.get("gemini_model")
+
+    if gemini_api_key is None and gemini_model is None:
+        return jsonify({"error": "Data pengaturan tidak ditemukan."}), 400
+
+    try:
+        if gemini_api_key is not None:
+            _upsert_env_value("GEMINI_API_KEY", str(gemini_api_key).strip())
+
+        if gemini_model is not None:
+            clean_model = str(gemini_model).strip()
+            if not clean_model:
+                clean_model = "gemini-2.5-flash"
+            _upsert_env_value("GEMINI_MODEL", clean_model)
+
+        _reload_runtime_settings()
+
+        return jsonify({
+            "status": "success",
+            "message": "Pengaturan API berhasil disimpan dan diterapkan.",
+            "data": {
+                "gemini_api_key_set": bool(GEMINI_API_KEY),
+                "gemini_api_key_masked": _mask_secret(GEMINI_API_KEY),
+                "gemini_model": GEMINI_MODEL,
+            }
+        })
+    except Exception as e:
+        logger.error(f"❌ Gagal menyimpan settings admin: {e}")
+        return jsonify({"error": "Gagal menyimpan pengaturan API."}), 500
+
+
+# =====================================================================
+# 9. ROUTING API UNTUK AUTO-SCRAPER (PREVIEW MODE)
 # =====================================================================
 @app.route("/api/scrape", methods=["POST"])
 def api_scrape():
@@ -262,6 +368,9 @@ def api_scrape():
     
     if not target_url:
         return jsonify({"error": "URL tidak boleh kosong"}), 400
+
+    if not GEMINI_CLIENT:
+        return jsonify({"error": "GEMINI_API_KEY belum dikonfigurasi."}), 400
 
     logger.info(f"🌍 Menerima request scraping untuk URL: {target_url}")
 
@@ -289,7 +398,7 @@ def api_scrape():
         """
         
         ai_response = GEMINI_CLIENT.models.generate_content(
-            model='gemini-2.5-flash',
+            model=GEMINI_MODEL,
             contents=prompt,
         )
         
@@ -304,7 +413,7 @@ def api_scrape():
 
 
 # =====================================================================
-# 9. JALANKAN SERVER (HARUS DI PALING BAWAH!)
+# 10. JALANKAN SERVER (HARUS DI PALING BAWAH!)
 # =====================================================================
 if __name__ == "__main__":
     app.run(host="0.0.0.0", debug=True, port=5000)
