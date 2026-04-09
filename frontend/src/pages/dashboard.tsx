@@ -1170,6 +1170,13 @@ export default function DashboardPage() {
                 >
                   {isScraping ? "Menyedot..." : "Mulai Scrape"}
                 </button>
+                <button
+                  onClick={handleCancelScrape}
+                  disabled={isScraping}
+                  className="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-5 rounded transition-all disabled:opacity-50 text-sm whitespace-nowrap"
+                >
+                  Batal
+                </button>
               </div>
 
               {scrapeStatus.text && (

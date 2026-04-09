@@ -15,6 +15,9 @@ from firebase_admin import credentials, firestore
 from google import genai
 from google.genai import types
 
+# Import auto_scraper module
+from auto_scraper import scrape_url
+
 # =====================================================================
 # 1. KONFIGURASI AWAL & DATABASE
 # =====================================================================
@@ -102,6 +105,8 @@ ALLOWED_ORIGINS = [
     "http://localhost:3000",        
     "http://127.0.0.1:3000",
     "http://192.168.1.8:3000",      
+    "http://43.156.170.74.nip.io:3000",  # <-- Tambahkan alamat domain VPS Anda
+    "http://43.156.170.74:3000"          # <-- Tambahkan IP asli VPS (untuk jaga-jaga)
 ]
 
 CORS(app, resources={
@@ -359,15 +364,24 @@ def update_admin_settings():
 # =====================================================================
 @app.route("/api/scrape", methods=["POST"])
 def api_scrape():
+    """
+    Admin endpoint untuk scrape URL dan generate FAQ
+    Request body: {"url": "https://example.com/page"}
+    Header: Authorization: Bearer <ADMIN_SECRET_TOKEN>
+    """
     token = request.headers.get("Authorization")
     if token != f"Bearer {ADMIN_SECRET_TOKEN}":
-        return jsonify({"error": "Akses Ditolak!"}), 401
+        logger.warning("🚨 Unauthorized scrape attempt!")
+        return jsonify({"error": "Akses Ditolak! Token tidak valid."}), 401
 
     data = request.json
     target_url = data.get("url")
     
-    if not target_url:
-        return jsonify({"error": "URL tidak boleh kosong"}), 400
+    if not target_url or not isinstance(target_url, str):
+        return jsonify({"error": "URL tidak boleh kosong atau tidak valid"}), 400
+
+    if not target_url.startswith(('http://', 'https://')):
+        return jsonify({"error": "URL harus dimulai dengan http:// atau https://"}), 400
 
     if not GEMINI_CLIENT:
         return jsonify({"error": "GEMINI_API_KEY belum dikonfigurasi."}), 400
@@ -402,14 +416,47 @@ def api_scrape():
             contents=prompt,
         )
         
-        clean_json = ai_response.text.replace("```json", "").replace("```", "").strip()
-        faqs = json.loads(clean_json)
-        
-        return jsonify({"status": "success", "data": faqs})
+        if result["success"]:
+            # Clear cache karena ada FAQ baru
+            global FAQ_CACHE, LAST_FETCH_TIME
+            FAQ_CACHE = None
+            LAST_FETCH_TIME = 0
+            
+            logger.info(f"✅ Scraping sukses: {len(result['faqs'])} FAQ generated")
+            
+            return jsonify({
+                "status": "success",
+                "message": result["message"],
+                "data": result["faqs"],
+                "count": len(result["faqs"]),
+                "debug": result.get("debug", "")
+            }), 200
+        else:
+            logger.warning(f"⚠️ Scraping gagal: {result.get('error', 'Unknown error')}")
+            
+            return jsonify({
+                "status": "error",
+                "message": result.get("message") or "Gagal memproses scraping",
+                "error": result.get("error"),
+                "data": [],
+                "count": 0,
+                "debug": result.get("debug", "")
+            }), 400
 
     except Exception as e:
-        logger.error(f"❌ Error Scraper API: {e}")
-        return jsonify({"error": f"Terjadi kesalahan saat memproses data: {str(e)}"}), 500
+        error_msg = str(e)
+        logger.error(f"❌ Scrape Error: {error_msg}")
+        import traceback
+        traceback.print_exc()
+        
+        return jsonify({
+            "status": "error",
+            "message": "Terjadi kesalahan saat scraping halaman",
+            "error": error_msg,
+            "data": [],
+            "count": 0,
+            "debug": f"Exception: {error_msg}"
+        }), 500
 
 
 # =====================================================================
