@@ -415,6 +415,30 @@ def api_scrape():
             model=GEMINI_MODEL,
             contents=prompt,
         )
+
+        # 1. Ambil teks mentah dari AI
+        teks_jawaban = ai_response.text
+
+        # 2. Bersihkan teks (jika AI memberikan format markdown ```json)
+        teks_bersih = teks_jawaban.replace('```json', '').replace('```', '').strip()
+
+        try:
+            # 3. Ubah teks string menjadi list/array Python
+            data_faq = json.loads(teks_bersih)
+            
+            # 4. DEFINISIKAN variabel 'result' di sini agar tidak error lagi
+            result = {
+                "success": True,
+                "message": "Scraping dan ekstraksi FAQ berhasil",
+                "faqs": data_faq
+            }
+        except Exception as e:
+            # Jika JSON tidak valid, buat 'result' dengan success False
+            result = {
+                "success": False,
+                "error": str(e),
+                "message": "AI tidak memberikan format JSON yang benar"
+            }
         
         if result["success"]:
             # Clear cache karena ada FAQ baru

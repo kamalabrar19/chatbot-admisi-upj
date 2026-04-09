@@ -322,6 +322,13 @@ export default function DashboardPage() {
     }
   };
 
+  const handleCancelScrape = () => {
+    setIsScraping(false);
+    setScrapeStatus({ type: "", text: "" });
+    setScrapeUrl("");
+    setPreviewData([]);
+  };
+
   const fetchAdminSettings = async () => {
     setSettingsLoading(true);
     setSettingsStatus({ type: "", text: "" });
