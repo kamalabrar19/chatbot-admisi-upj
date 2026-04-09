@@ -8,6 +8,7 @@ import { collection, getDocs, addDoc, deleteDoc, doc, writeBatch, query, orderBy
 import * as XLSX from "xlsx";
 import styles from "../styles/dashboard.module.css";
 import Head from "next/head";
+import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, AreaChart, Area, PieChart, Pie, Cell } from "recharts";
 
 
 interface FeedbackRecap {
@@ -39,6 +40,8 @@ export default function DashboardPage() {
   const [status, setStatus] = useState({ type: "", message: "" });
   const [isUploading, setIsUploading] = useState(false);
   const [leadSearch, setLeadSearch] = useState("");
+  const [faqSearch, setFaqSearch] = useState("");
+  const [chatLogSearch, setChatLogSearch] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editQ, setEditQ] = useState("");
   const [editA, setEditA] = useState("");
@@ -52,8 +55,22 @@ export default function DashboardPage() {
   const [previewData, setPreviewData] = useState<{ q: string; a: string }[]>([]);
   const [scrapeStatus, setScrapeStatus] = useState({ type: "", text: "" });
 
+  // ==========================================
+  // STATE KHUSUS SETTINGS API
+  // ==========================================
+  const [settingsLoading, setSettingsLoading] = useState(false);
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [settingsStatus, setSettingsStatus] = useState({ type: "", text: "" });
+  const [settingsData, setSettingsData] = useState({
+    geminiApiKey: "",
+    geminiModel: "gemini-2.5-flash",
+    currentMaskedKey: "",
+    isKeySet: false,
+  });
+
   // FAQ show more/less state
   const [showAllFaqs, setShowAllFaqs] = useState(false);
+  const [activeSection, setActiveSection] = useState("overview");
 
 
   useEffect(() => {
@@ -305,11 +322,96 @@ export default function DashboardPage() {
     }
   };
 
-  const handleCancelScrape = () => {
-    setScrapeUrl("");
-    setPreviewData([]);
-    setScrapeStatus({ type: "", text: "" });
+  const fetchAdminSettings = async () => {
+    setSettingsLoading(true);
+    setSettingsStatus({ type: "", text: "" });
+    try {
+      const token = process.env.NEXT_PUBLIC_ADMIN_SECRET_TOKEN;
+      if (!token) {
+        setSettingsStatus({ type: "error", text: "Token admin frontend belum diatur (NEXT_PUBLIC_ADMIN_SECRET_TOKEN)." });
+        return;
+      }
+
+      const res = await fetch("http://localhost:5000/api/admin/settings", {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+      });
+      const payload = await res.json();
+
+      if (!res.ok || payload.status !== "success") {
+        setSettingsStatus({ type: "error", text: payload.error || "Gagal mengambil pengaturan API." });
+        return;
+      }
+
+      setSettingsData((prev) => ({
+        ...prev,
+        geminiModel: payload.data?.gemini_model || "gemini-2.5-flash",
+        currentMaskedKey: payload.data?.gemini_api_key_masked || "",
+        isKeySet: Boolean(payload.data?.gemini_api_key_set),
+      }));
+    } catch (error) {
+      setSettingsStatus({ type: "error", text: "Gagal menghubungi backend settings API." });
+    } finally {
+      setSettingsLoading(false);
+    }
   };
+
+  const saveAdminSettings = async () => {
+    setSettingsSaving(true);
+    setSettingsStatus({ type: "", text: "" });
+    try {
+      const token = process.env.NEXT_PUBLIC_ADMIN_SECRET_TOKEN;
+      if (!token) {
+        setSettingsStatus({ type: "error", text: "Token admin frontend belum diatur (NEXT_PUBLIC_ADMIN_SECRET_TOKEN)." });
+        return;
+      }
+
+      const body: any = {
+        gemini_model: settingsData.geminiModel,
+      };
+
+      if (settingsData.geminiApiKey.trim()) {
+        body.gemini_api_key = settingsData.geminiApiKey.trim();
+      }
+
+      const res = await fetch("http://localhost:5000/api/admin/settings", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+      const payload = await res.json();
+
+      if (!res.ok || payload.status !== "success") {
+        setSettingsStatus({ type: "error", text: payload.error || "Gagal menyimpan pengaturan API." });
+        return;
+      }
+
+      setSettingsData((prev) => ({
+        ...prev,
+        geminiApiKey: "",
+        currentMaskedKey: payload.data?.gemini_api_key_masked || prev.currentMaskedKey,
+        isKeySet: Boolean(payload.data?.gemini_api_key_set),
+        geminiModel: payload.data?.gemini_model || prev.geminiModel,
+      }));
+      setSettingsStatus({ type: "success", text: payload.message || "Pengaturan API berhasil disimpan." });
+    } catch (error) {
+      setSettingsStatus({ type: "error", text: "Terjadi gangguan saat menyimpan pengaturan API." });
+    } finally {
+      setSettingsSaving(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeSection === "settings") {
+      fetchAdminSettings();
+    }
+  }, [activeSection]);
 
   // ==========================================
   // KALKULASI STATISTIK & INSIGHT
@@ -411,6 +513,42 @@ export default function DashboardPage() {
     );
   }, [leadSearch, leads]);
 
+  const leadsTodayCount = leads.filter((lead) => {
+    const d = lead.waktu_daftar?.toDate?.();
+    if (!d) return false;
+    return d.toISOString().slice(0, 10) === new Date().toISOString().slice(0, 10);
+  }).length;
+
+  const recentLeads7dCount = leads.filter((lead) => {
+    const d = lead.waktu_daftar?.toDate?.();
+    if (!d) return false;
+    const now = Date.now();
+    return now - d.getTime() <= 7 * 24 * 60 * 60 * 1000;
+  }).length;
+
+  const leadsWithWhatsApp = leads.filter((lead) => (lead.whatsapp || "").trim() !== "").length;
+  const waCoverage = leads.length ? Math.round((leadsWithWhatsApp / leads.length) * 100) : 0;
+
+  const filteredFaqs = useMemo(() => {
+    if (!faqSearch.trim()) return faqs;
+    const term = faqSearch.toLowerCase();
+    return faqs.filter(
+      (f) =>
+        f.q?.toLowerCase().includes(term) ||
+        f.a?.toLowerCase().includes(term)
+    );
+  }, [faqSearch, faqs]);
+
+  const filteredChatLogs = useMemo(() => {
+    if (!chatLogSearch.trim()) return chatLogs;
+    const term = chatLogSearch.toLowerCase();
+    return chatLogs.filter(
+      (log) =>
+        log.user_message?.toLowerCase().includes(term) ||
+        log.bot_response?.toLowerCase().includes(term)
+    );
+  }, [chatLogSearch, chatLogs]);
+
   const sections = [
     { id: "overview", label: "Overview" },
     { id: "charts", label: "Insight" },
@@ -419,72 +557,135 @@ export default function DashboardPage() {
     { id: "faq", label: "FAQ" },
     { id: "logs", label: "Chat Logs" },
     { id: "leads", label: "Leads" },
+    { id: "settings", label: "Settings API" },
   ];
+
+  const helpfulCount = feedbacks.filter((f) => f.isHelpful).length;
+  const unhelpfulCount = feedbacks.filter((f) => !f.isHelpful).length;
+  const helpfulRate = feedbacks.length ? Math.round((helpfulCount / feedbacks.length) * 100) : 0;
+  const feedback7d = feedbacks.filter((f) => {
+    const d = f.timestamp?.toDate?.();
+    if (!d) return false;
+    return Date.now() - d.getTime() <= 7 * 24 * 60 * 60 * 1000;
+  }).length;
+  const feedbackTone = helpfulRate >= 75 ? "Sangat Baik" : helpfulRate >= 55 ? "Cukup Baik" : "Perlu Optimasi";
+
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const todayChats = chatLogs.filter((log) => {
+    const d = log.timestamp?.toDate?.();
+    if (!d) return false;
+    return d.toISOString().slice(0, 10) === todayKey;
+  }).length;
+  const avgUserMsgLength = chatLogs.length
+    ? Math.round(chatLogs.reduce((acc, log) => acc + (log.user_message?.length || 0), 0) / chatLogs.length)
+    : 0;
+  const topWord = (() => {
+    const stopWords = new Set(["yang", "dan", "atau", "dengan", "untuk", "dari", "ke", "di", "saya", "aku", "kak", "mohon", "apa", "bagaimana"]);
+    const counter: Record<string, number> = {};
+    chatLogs.forEach((log) => {
+      const words = (log.user_message || "")
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, " ")
+        .split(/\s+/)
+        .filter((w) => w.length >= 4 && !stopWords.has(w));
+      words.forEach((w) => {
+        counter[w] = (counter[w] || 0) + 1;
+      });
+    });
+    return Object.entries(counter).sort((a, b) => b[1] - a[1])[0]?.[0] || "-";
+  })();
+
+  const leadChartData = Object.entries(leadByMajor).map(([major, value]) => ({ major, value }));
+  const chatTrendData = sortedDays.map((day) => ({
+    day: day.slice(5),
+    chats: logsByDay[day],
+  }));
+  const feedbackChartData = [
+    { name: "Membantu", value: helpfulCount, color: "#10b981" },
+    { name: "Tidak", value: unhelpfulCount, color: "#fb7185" },
+  ];
+
+  const busiestDay = sortedDays.length
+    ? sortedDays.reduce((prev, curr) => (logsByDay[curr] > logsByDay[prev] ? curr : prev), sortedDays[0])
+    : "-";
+  const logsPerLead = totalLeads > 0 ? (totalLogs / totalLeads).toFixed(1) : "0";
+  const insightStrength = Math.min(100, Math.round((helpfulRate * 0.5) + (Math.min(totalLogs, 50) * 1)));
 
   if (!user) {
     return <div className="min-h-screen flex items-center justify-center bg-gray-50 text-gray-600">Memuat...</div>;
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-800 font-sans">
+    <div className={`${styles.pageShell} min-h-screen text-gray-800 font-sans`}>
+      <div className={styles.bgLayer} aria-hidden="true">
+        <div className={`${styles.bgOrb} ${styles.bgOrbA}`} />
+        <div className={`${styles.bgOrb} ${styles.bgOrbB}`} />
+        <div className={`${styles.bgGrid}`} />
+      </div>
       <Head>
         <title>Admin • Admisi UPJ</title>
       </Head>
-      <header className="bg-white/95 backdrop-blur border-b border-gray-100 sticky top-0 z-30 shadow-[0_12px_30px_-18px_rgba(15,23,42,0.25)]">
-        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <img src="/images/logo-upj.svg" alt="UPJ" className="w-10 h-10 rounded-xl bg-white border border-blue-100 p-1 shadow-sm" />
-            <div>
-              <h1 className="text-xl font-bold text-blue-900 tracking-tight">Admisi UPJ • Admin</h1>
-              <p className="text-xs text-gray-500">Monitoring chatbot, leads, dan FAQ</p>
+      <header className={`${styles.topbar} sticky top-0 z-30`}>
+        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className={styles.logoWrap}>
+              <img src="/images/logo-upj.svg" alt="UPJ" className="w-9 h-9 rounded-lg bg-white p-1" />
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-base sm:text-lg font-bold text-slate-900 tracking-tight truncate">Dashboard Admisi UPJ</h1>
+              <p className="text-[11px] sm:text-xs text-slate-500 truncate">Kelola chatbot, data calon mahasiswa, dan insight harian</p>
             </div>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             <button
               onClick={() => setMenuOpen(!menuOpen)}
-              className="sm:hidden px-3 py-2 rounded-lg border border-gray-200 text-gray-700 hover:bg-gray-100"
+              className="sm:hidden px-3 py-2 rounded-xl border border-slate-200 bg-white/80 text-slate-700 hover:bg-white"
               aria-label="Toggle menu"
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
               </svg>
             </button>
-            
 
-            <div className="hidden sm:flex items-center gap-4 border-l border-gray-200 pl-4">
-              <div className="flex flex-col items-end leading-tight">
-                <span className="text-sm font-semibold text-blue-900">{user.email}</span>
-                <span className="text-[11px] text-gray-500">Super Admin</span>
+            <div className="hidden sm:flex items-center gap-3 border-l border-slate-200 pl-3">
+              <div className={styles.profileBadge}>
+                <div className={styles.profileDot} />
+                <div className="flex flex-col leading-tight">
+                  <span className="text-sm font-semibold text-slate-900">{user.email}</span>
+                  <span className="text-[11px] text-slate-500">Admin Aktif</span>
+                </div>
               </div>
               <button
                 onClick={handleLogout}
-                className="px-3 py-1.5 bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700 rounded-lg text-sm font-bold transition-colors"
+                className="px-3 py-1.5 bg-white text-rose-600 hover:bg-rose-50 border border-rose-200 rounded-xl text-sm font-bold transition-colors"
               >
                 Keluar
               </button>
             </div>
-
           </div>
         </div>
         {menuOpen && (
-          <div className="sm:hidden border-t border-gray-100 bg-white px-4 pb-3 shadow-[0_14px_32px_-18px_rgba(15,23,42,0.35)]">
+          <div className="sm:hidden border-t border-slate-100 bg-white/95 backdrop-blur px-4 pb-3 shadow-[0_14px_32px_-18px_rgba(15,23,42,0.35)]">
             <div className="flex flex-col gap-2 py-2">
               {sections.map((s) => (
-                <a
+                <button
                   key={s.id}
-                  href={`#${s.id}`}
-                  onClick={() => setMenuOpen(false)}
-                  className="flex items-center justify-between text-sm font-semibold text-blue-900 py-2 px-2 rounded-lg hover:bg-blue-50 border border-transparent hover:border-blue-100 transition"
+                  type="button"
+                  onClick={() => {
+                    setActiveSection(s.id);
+                    setMenuOpen(false);
+                  }}
+                  className="flex items-center justify-between text-sm font-semibold text-slate-800 py-2 px-3 rounded-xl hover:bg-slate-50 border border-transparent hover:border-slate-200 transition"
                 >
                   {s.label}
-                  <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                   </svg>
-                </a>
+                </button>
               ))}
               <button
                 onClick={handleLogout}
-                className="mt-2 w-full px-3 py-2 bg-red-500 text-white rounded-lg text-sm font-semibold hover:bg-red-600 shadow-sm flex items-center justify-center gap-2"
+                className="mt-2 w-full px-3 py-2 bg-rose-500 text-white rounded-xl text-sm font-semibold hover:bg-rose-600 shadow-sm flex items-center justify-center gap-2"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7" />
@@ -497,115 +698,178 @@ export default function DashboardPage() {
         )}
       </header>
 
-      <div className={`max-w-6xl mx-auto px-4 py-6 ${styles.layout}`}>
+      <div className={`max-w-7xl mx-auto px-4 py-6 relative z-10 ${styles.layout}`}>
         <aside className={styles.sidebar}>
+          <div className={styles.sidebarHead}>
+            <p className="text-[11px] uppercase tracking-[0.16em] text-slate-500 font-semibold">Navigasi Cepat</p>
+            <h3 className="text-base font-bold text-slate-900 mt-1">Menu Admin</h3>
+          </div>
           <nav className="flex flex-col gap-2">
             {sections.map((s) => (
-              <a key={s.id} href={`#${s.id}`} className={styles.navItem}>
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => setActiveSection(s.id)}
+                className={`${styles.navItem} text-left ${activeSection === s.id ? styles.navItemActive : ""}`}
+              >
                 {s.label}
-              </a>
+              </button>
             ))}
           </nav>
+          <div className={styles.sidebarFoot}>
+            <p className="text-xs text-slate-600">Saran alur kerja:</p>
+            <ol className="text-xs text-slate-500">
+              <li>1. Cek overview harian</li>
+              <li>2. Review feedback</li>
+              <li>3. Update FAQ/scraper</li>
+            </ol>
+          </div>
         </aside>
 
         <main className={styles.main}>
-          {/* FEEDBACK CHATBOT SECTION */}
-          <section id="feedback" className={styles.card}>
-            <div className={styles.cardHeader}>
-              <h2>Feedback Chatbot</h2>
-              <span className={styles.subtle}>Rekap feedback user (👍/👎)</span>
-            </div>
-            {isLoadingFeedback ? (
-              <div className="py-8 text-center text-gray-400">Memuat data feedback...</div>
-            ) : (
-              <>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                  <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 flex flex-col items-center">
-                    <span className="text-2xl font-bold text-blue-700">{feedbacks.length}</span>
-                    <span className="text-xs text-blue-900 font-semibold mt-1">Total Feedback</span>
-                  </div>
-                  <div className="bg-green-50 border border-green-100 rounded-xl p-4 flex flex-col items-center">
-                    <span className="text-2xl font-bold text-green-700">{feedbacks.filter(f => f.isHelpful).length}</span>
-                    <span className="text-xs text-green-900 font-semibold mt-1">👍 Membantu</span>
-                    <div className="w-full mt-2 h-2 bg-green-100 rounded-full overflow-hidden">
-                      <div className="bg-green-500 h-2 rounded-full" style={{ width: `${feedbacks.length ? (feedbacks.filter(f => f.isHelpful).length / feedbacks.length * 100) : 0}%` }} />
-                    </div>
-                  </div>
-                  <div className="bg-red-50 border border-red-100 rounded-xl p-4 flex flex-col items-center">
-                    <span className="text-2xl font-bold text-red-600">{feedbacks.filter(f => !f.isHelpful).length}</span>
-                    <span className="text-xs text-red-700 font-semibold mt-1">👎 Tidak Membantu</span>
-                    <div className="w-full mt-2 h-2 bg-red-100 rounded-full overflow-hidden">
-                      <div className="bg-red-500 h-2 rounded-full" style={{ width: `${feedbacks.length ? (feedbacks.filter(f => !f.isHelpful).length / feedbacks.length * 100) : 0}%` }} />
-                    </div>
-                  </div>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="min-w-full text-xs md:text-sm border rounded-xl overflow-hidden bg-white">
-                    <thead className="bg-gray-50 border-b">
-                      <tr>
-                        <th className="px-3 py-2 text-left font-bold text-blue-900">Waktu</th>
-                        <th className="px-3 py-2 text-left font-bold text-blue-900">Jawaban Chatbot</th>
-                        <th className="px-3 py-2 text-center font-bold text-blue-900">Feedback</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {feedbacks.slice(0, 10).map(fb => (
-                        <tr key={fb.id} className="border-b last:border-0 hover:bg-blue-50/40">
-                          <td className="px-3 py-2 whitespace-nowrap text-gray-600">{fb.timestamp?.toDate?.().toLocaleString?.() || "-"}</td>
-                          <td className="px-3 py-2 max-w-xs md:max-w-md truncate text-gray-800" title={fb.text}>{fb.text}</td>
-                          <td className="px-3 py-2 text-center">
-                            {fb.isHelpful ? <span className="inline-flex items-center gap-1 text-green-700 font-bold">👍 <span className="hidden md:inline">Membantu</span></span> : <span className="inline-flex items-center gap-1 text-red-600 font-bold">👎 <span className="hidden md:inline">Tidak</span></span>}
-                          </td>
-                        </tr>
-                      ))}
-                      {feedbacks.length === 0 && (
-                        <tr><td colSpan={3} className="text-center text-gray-400 py-6">Belum ada feedback.</td></tr>
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </>
-            )}
-          </section>
-          <section id="overview" className={styles.card}>
-            <div className={styles.cardHeader}>
+          {activeSection === "overview" && (
+          <section className={`${styles.card} ${styles.heroCard}`}>
+            <div className={styles.heroTop}>
               <div>
-                <h2>Overview</h2>
-                <span className={styles.subtle}>Ringkasan cepat performa chatbot</span>
+                <p className={styles.eyebrow}>Ringkasan Operasional</p>
+                <h2 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">Pusat Kendali Admisi</h2>
+                <p className="text-sm text-slate-600 mt-1">Pantau performa chatbot, kualitas jawaban, dan potensi pendaftar dalam satu layar.</p>
               </div>
               <button onClick={exportAnalyticsToExcel} className={`${styles.btn} ${styles.btnSuccess}`}>
                 Export Insight (.xlsx)
               </button>
             </div>
+
             <div className={styles.gridCards}>
               <div className={styles.statCard}>
                 <p>Total Leads</p>
                 <strong>{totalLeads}</strong>
-                <span>{uniqueMajors.length} minat jurusan</span>
+                <span>{uniqueMajors.length} variasi minat jurusan</span>
               </div>
               <div className={styles.statCard}>
-                <p>FAQ Tersedia</p>
+                <p>FAQ Aktif</p>
                 <strong>{totalFaqs}</strong>
-                <span>Pertanyaan terdaftar</span>
+                <span>Siap dipakai chatbot</span>
               </div>
               <div className={styles.statCard}>
-                <p>Chat Log (50)</p>
-                <strong>{totalLogs}</strong>
-                <span>Terbaru tersimpan</span>
+                <p>Feedback Positif</p>
+                <strong>{helpfulRate}%</strong>
+                <span>{helpfulCount} membantu, {unhelpfulCount} belum membantu</span>
               </div>
               <div className={styles.statCard}>
                 <p>Jurusan Teratas</p>
                 <strong>{topMajor}</strong>
-                <span>Minat tertinggi saat ini</span>
+                <span>Paling sering dipilih calon mahasiswa</span>
               </div>
             </div>
-          </section>
 
-          <section id="charts" className={styles.card}>
+            <div className={styles.heroInsights}>
+              <div className={styles.insightItem}>
+                <span className={styles.insightLabel}>Aktivitas Chat 7 Hari</span>
+                <span className={styles.insightValue}>Puncak {maxLogCount} chat/hari</span>
+              </div>
+              <div className={styles.insightItem}>
+                <span className={styles.insightLabel}>Chat Log Tersimpan</span>
+                <span className={styles.insightValue}>{totalLogs} log terbaru</span>
+              </div>
+              <div className={styles.insightItem}>
+                <span className={styles.insightLabel}>Kualitas Jawaban</span>
+                <span className={styles.insightValue}>{feedbacks.length === 0 ? "Belum ada penilaian" : `${helpfulRate}% dinilai membantu`}</span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
+              <div className="rounded-2xl border border-sky-100 bg-white p-4 h-[290px]">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Grafik Minat Jurusan</p>
+                {leadChartData.length === 0 ? (
+                  <div className="h-full flex items-center justify-center text-sm text-slate-400">Belum ada data leads.</div>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={leadChartData} margin={{ top: 6, right: 8, left: 0, bottom: 32 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                      <XAxis dataKey="major" angle={-25} textAnchor="end" interval={0} height={54} tick={{ fontSize: 11, fill: "#475569" }} />
+                      <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: "#475569" }} />
+                      <Tooltip />
+                      <Bar dataKey="value" radius={[6, 6, 0, 0]} fill="#0ea5e9" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+
+              <div className="rounded-2xl border border-emerald-100 bg-white p-4 h-[290px]">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Tren Percakapan Harian</p>
+                {chatTrendData.length === 0 ? (
+                  <div className="h-full flex items-center justify-center text-sm text-slate-400">Belum ada data chat.</div>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={chatTrendData} margin={{ top: 8, right: 8, left: 0, bottom: 8 }}>
+                      <defs>
+                        <linearGradient id="chatFill" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#10b981" stopOpacity={0.35} />
+                          <stop offset="95%" stopColor="#10b981" stopOpacity={0.05} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                      <XAxis dataKey="day" tick={{ fontSize: 11, fill: "#475569" }} />
+                      <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: "#475569" }} />
+                      <Tooltip />
+                      <Area type="monotone" dataKey="chats" stroke="#059669" fill="url(#chatFill)" strokeWidth={2.4} />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-rose-100 bg-white p-4 h-[260px] mt-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Komposisi Feedback</p>
+              {feedbacks.length === 0 ? (
+                <div className="h-full flex items-center justify-center text-sm text-slate-400">Belum ada feedback pengguna.</div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={feedbackChartData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={58} outerRadius={88} paddingAngle={4}>
+                      {feedbackChartData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={entry.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip />
+                  </PieChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </section>
+          )}
+
+          {activeSection === "charts" && (
+          <section className={styles.card}>
             <div className={styles.cardHeader}>
               <h2>Insight</h2>
-              <span className={styles.subtle}>Distribusi data</span>
+              <span className={styles.subtle}>Analitik mendalam untuk evaluasi tim admisi</span>
             </div>
+
+            <div className={styles.insightTopGrid}>
+              <div className={styles.insightMiniCard}>
+                <p>Hari Terpadat</p>
+                <strong>{busiestDay === "-" ? "-" : busiestDay.slice(5)}</strong>
+                <span>{busiestDay === "-" ? "Belum ada data" : `${logsByDay[busiestDay]} chat`}</span>
+              </div>
+              <div className={styles.insightMiniCard}>
+                <p>Log per Lead</p>
+                <strong>{logsPerLead}</strong>
+                <span>Rasio interaksi terhadap calon mahasiswa</span>
+              </div>
+              <div className={styles.insightMiniCard}>
+                <p>Kualitas Feedback</p>
+                <strong>{helpfulRate}%</strong>
+                <span>{helpfulCount} positif vs {unhelpfulCount} negatif</span>
+              </div>
+              <div className={styles.insightMiniCard}>
+                <p>Insight Score</p>
+                <strong>{insightStrength}</strong>
+                <span>Skor komposit kualitas operasional</span>
+              </div>
+            </div>
+
             <div className={styles.charts}>
               <div className={styles.chartBlock}>
                 <div className={styles.chartTitle}>Leads per Jurusan</div>
@@ -638,14 +902,14 @@ export default function DashboardPage() {
                     <svg viewBox="0 0 100 40" preserveAspectRatio="none" className={styles.sparkline}>
                       <polyline
                         fill="none"
-                        stroke="#10b981"
+                        stroke="#0f766e"
                         strokeWidth="2.2"
                         points={sparklinePoints}
                       />
                       {sortedDays.map((d, idx) => {
                         const x = (idx / Math.max(sortedDays.length - 1, 1)) * 100;
                         const y = 40 - (logsByDay[d] / maxLogCount) * 40;
-                        return <circle key={d} cx={x} cy={y} r="1.8" fill="#10b981" />;
+                        return <circle key={d} cx={x} cy={y} r="1.8" fill="#0f766e" />;
                       })}
                     </svg>
                     <div className={styles.sparkMeta}>
@@ -656,12 +920,232 @@ export default function DashboardPage() {
                 )}
               </div>
             </div>
+
+            <div className={styles.insightBottomGrid}>
+              <div className={styles.insightPanel}>
+                <div className={styles.chartTitle}>Aktivitas Harian (7 Hari)</div>
+                {sortedDays.length === 0 ? (
+                  <p className={styles.muted}>Belum ada aktivitas chat.</p>
+                ) : (
+                  <div className={styles.dayPillWrap}>
+                    {sortedDays.map((day) => {
+                      const count = logsByDay[day];
+                      const intensity = maxLogCount > 0 ? count / maxLogCount : 0;
+                      return (
+                        <div key={day} className={styles.dayPillItem}>
+                          <span className={styles.dayPillDate}>{day.slice(5)}</span>
+                          <div className={styles.dayPillTrack}>
+                            <div className={styles.dayPillFill} style={{ width: `${Math.max(8, intensity * 100)}%` }} />
+                          </div>
+                          <span className={styles.dayPillCount}>{count}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div className={styles.insightPanel}>
+                <div className={styles.chartTitle}>Komposisi Jurusan Top 4</div>
+                {leadChartData.length === 0 ? (
+                  <p className={styles.muted}>Belum ada data jurusan.</p>
+                ) : (
+                  <div className={styles.progressList}>
+                    {leadChartData
+                      .sort((a, b) => b.value - a.value)
+                      .slice(0, 4)
+                      .map((item) => (
+                        <div key={item.major} className={styles.progressRow}>
+                          <span className={styles.progressLabel}>{item.major}</span>
+                          <div className={styles.progressTrack}>
+                            <div className={styles.progressFill} style={{ width: `${(item.value / maxLeadCount) * 100}%` }} />
+                          </div>
+                          <span className={styles.progressValue}>{item.value}</span>
+                        </div>
+                      ))}
+                  </div>
+                )}
+              </div>
+            </div>
           </section>
+          )}
+
+          {activeSection === "feedback" && (
+          <section className={styles.card}>
+            <div className={styles.cardHeader}>
+              <h2>Feedback Chatbot</h2>
+              <span className={styles.subtle}>Pemantauan kepuasan pengguna terhadap kualitas jawaban chatbot</span>
+            </div>
+            {isLoadingFeedback ? (
+              <div className="py-8 text-center text-gray-400">Memuat data feedback...</div>
+            ) : (
+              <>
+                <div className={styles.feedbackTopGrid}>
+                  <div className={styles.feedbackMetricGrid}>
+                    <div className={styles.feedbackMetricCard}>
+                      <p>Total Feedback</p>
+                      <strong>{feedbacks.length}</strong>
+                      <span>Seluruh penilaian pengguna</span>
+                    </div>
+                    <div className={styles.feedbackMetricCard}>
+                      <p>Positif (👍)</p>
+                      <strong>{helpfulCount}</strong>
+                      <span>Respons dinilai membantu</span>
+                    </div>
+                    <div className={styles.feedbackMetricCard}>
+                      <p>Negatif (👎)</p>
+                      <strong>{unhelpfulCount}</strong>
+                      <span>Perlu evaluasi respons</span>
+                    </div>
+                    <div className={styles.feedbackMetricCard}>
+                      <p>Feedback 7 Hari</p>
+                      <strong>{feedback7d}</strong>
+                      <span>Aktivitas minggu berjalan</span>
+                    </div>
+                  </div>
+
+                  <div className={styles.feedbackHighlightCard}>
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.14em] text-slate-500 font-semibold">Skor Kepuasan</p>
+                      <h3 className="text-3xl font-bold text-slate-900 mt-1">{helpfulRate}%</h3>
+                      <p className="text-sm text-slate-600 mt-1">Status: <span className="font-semibold text-slate-800">{feedbackTone}</span></p>
+                    </div>
+                    <div className={styles.feedbackDonutWrap}>
+                      {feedbacks.length === 0 ? (
+                        <div className="text-sm text-slate-400">Belum ada data</div>
+                      ) : (
+                        <ResponsiveContainer width="100%" height="100%">
+                          <PieChart>
+                            <Pie data={feedbackChartData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={44} outerRadius={64} paddingAngle={3}>
+                              {feedbackChartData.map((entry, index) => (
+                                <Cell key={`feedback-cell-${index}`} fill={entry.color} />
+                              ))}
+                            </Pie>
+                            <Tooltip />
+                          </PieChart>
+                        </ResponsiveContainer>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className={styles.feedbackMeterRow}>
+                    <div className={styles.feedbackMeterItem}>
+                      <span className={styles.feedbackMeterLabel}>Membantu</span>
+                      <div className={styles.feedbackMeterTrack}>
+                        <div className={styles.feedbackMeterPositive} style={{ width: `${feedbacks.length ? (helpfulCount / feedbacks.length) * 100 : 0}%` }} />
+                      </div>
+                      <span className={styles.feedbackMeterValue}>{helpfulCount}</span>
+                    </div>
+                    <div className={styles.feedbackMeterItem}>
+                      <span className={styles.feedbackMeterLabel}>Tidak Membantu</span>
+                      <div className={styles.feedbackMeterTrack}>
+                        <div className={styles.feedbackMeterNegative} style={{ width: `${feedbacks.length ? (unhelpfulCount / feedbacks.length) * 100 : 0}%` }} />
+                      </div>
+                      <span className={styles.feedbackMeterValue}>{unhelpfulCount}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className={styles.feedbackListWrap}>
+                  {feedbacks.slice(0, 12).map((fb, idx) => (
+                    <div key={fb.id} className={styles.feedbackListItem}>
+                      <div className={styles.feedbackListLeft}>
+                        <div className={styles.feedbackRank}>#{idx + 1}</div>
+                        <div>
+                          <p className={styles.feedbackText}>{fb.text}</p>
+                          <p className={styles.feedbackTime}>{fb.timestamp?.toDate?.().toLocaleString?.() || "-"}</p>
+                        </div>
+                      </div>
+                      <div className={styles.feedbackBadgeWrap}>
+                        {fb.isHelpful ? (
+                          <span className={styles.feedbackBadgePositive}>👍 Membantu</span>
+                        ) : (
+                          <span className={styles.feedbackBadgeNegative}>👎 Tidak Membantu</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                  {feedbacks.length === 0 && <p className={styles.muted}>Belum ada feedback.</p>}
+                </div>
+              </>
+            )}
+          </section>
+          )}
+
+          {activeSection === "settings" && (
+          <section className={styles.card}>
+            <div className={styles.cardHeader}>
+              <h2>Settings API</h2>
+              <span className={styles.subtle}>Kelola konfigurasi Gemini tanpa edit file .env manual</span>
+            </div>
+
+            <div className={styles.settingsGrid}>
+              <div className={styles.settingsInfoCard}>
+                <p className="text-xs uppercase tracking-[0.12em] text-slate-500 font-semibold">Status Saat Ini</p>
+                <div className="mt-3 space-y-2 text-sm">
+                  <p><span className="font-semibold text-slate-700">GEMINI_API_KEY:</span> {settingsData.isKeySet ? "Tersimpan" : "Belum diatur"}</p>
+                  <p><span className="font-semibold text-slate-700">Key Aktif:</span> {settingsData.currentMaskedKey || "-"}</p>
+                  <p><span className="font-semibold text-slate-700">Model:</span> {settingsData.geminiModel || "gemini-2.5-flash"}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={fetchAdminSettings}
+                  disabled={settingsLoading}
+                  className={`${styles.btn} ${styles.btnIndigo} mt-4`}
+                >
+                  {settingsLoading ? "Memuat..." : "Refresh Status"}
+                </button>
+              </div>
+
+              <div className={styles.settingsFormCard}>
+                <label className="text-xs font-semibold text-slate-700">GEMINI API KEY (opsional)</label>
+                <input
+                  type="password"
+                  value={settingsData.geminiApiKey}
+                  onChange={(e) => setSettingsData((prev) => ({ ...prev, geminiApiKey: e.target.value }))}
+                  placeholder="Masukkan API key baru (kosongkan jika tidak diubah)"
+                  className={styles.input}
+                />
+
+                <label className="text-xs font-semibold text-slate-700 mt-3">Model Gemini</label>
+                <input
+                  type="text"
+                  value={settingsData.geminiModel}
+                  onChange={(e) => setSettingsData((prev) => ({ ...prev, geminiModel: e.target.value }))}
+                  placeholder="Contoh: gemini-2.5-flash"
+                  className={styles.input}
+                />
+
+                <div className="mt-3 p-3 rounded-xl border border-amber-100 bg-amber-50 text-[12px] text-amber-800">
+                  Setelah disimpan, backend akan reload konfigurasi runtime otomatis. Tidak perlu edit file `.env` manual.
+                </div>
+
+                <div className="mt-4 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={saveAdminSettings}
+                    disabled={settingsSaving}
+                    className={`${styles.btn} ${styles.btnPrimary}`}
+                  >
+                    {settingsSaving ? "Menyimpan..." : "Simpan Pengaturan"}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {settingsStatus.text && (
+              <div className={`mt-4 p-3 rounded-xl text-sm font-medium ${settingsStatus.type === "error" ? "bg-rose-100 text-rose-700" : "bg-emerald-100 text-emerald-700"}`}>
+                {settingsStatus.text}
+              </div>
+            )}
+          </section>
+          )}
 
           {/* ========================================== */}
           {/* SECTION BARU: AUTO-SCRAPER AI */}
           {/* ========================================== */}
-          <section id="scraper" className={styles.card}>
+          {activeSection === "scraper" && (
+          <section className={styles.card}>
             <div className={styles.cardHeader}>
               <div>
                 <h2>Auto-Scraper AI</h2>
@@ -709,7 +1193,7 @@ export default function DashboardPage() {
                   <button
                     onClick={handleSaveScrapeToFirestore}
                     disabled={isSavingScrape}
-                    className="bg-green-600 hover:bg-green-700 text-white font-bold py-1.5 px-4 rounded text-sm transition-all disabled:opacity-50"
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1.5 px-4 rounded-xl text-sm transition-all disabled:opacity-50"
                   >
                     {isSavingScrape ? "Menyimpan..." : "ACC & Simpan ke Firestore"}
                   </button>
@@ -752,11 +1236,20 @@ export default function DashboardPage() {
               </div>
             )}
           </section>
+          )}
 
-          <section id="faq" className={styles.card}>
+          {activeSection === "faq" && (
+          <section className={styles.card}>
             <div className={styles.cardHeader}>
               <h2>FAQ</h2>
               <div className={styles.cardActions}>
+                <input
+                  value={faqSearch}
+                  onChange={(e) => setFaqSearch(e.target.value)}
+                  placeholder="Cari FAQ (pertanyaan/jawaban)"
+                  className={styles.input}
+                  aria-label="Cari FAQ"
+                />
                 <button onClick={exportToExcel} className={`${styles.btn} ${styles.btnSuccess}`}>Export FAQ</button>
                 <label className={`${styles.btn} ${styles.btnPrimary} cursor-pointer`}>
                   Upload FAQ (xlsx)
@@ -765,8 +1258,22 @@ export default function DashboardPage() {
                 <button onClick={handleFileUpload} disabled={!file || isUploading} className={`${styles.btn} ${styles.btnIndigo} ${(!file || isUploading) ? styles.btnDisabled : ""}`}>{isUploading ? "Uploading..." : "Upload"}</button>
               </div>
             </div>
+
+            <div className={styles.formInline}>
+              <p className="text-sm font-semibold text-slate-700">Tambah FAQ Baru</p>
+              <input value={newQ} onChange={(e) => setNewQ(e.target.value)} placeholder="Pertanyaan" className={styles.input} />
+              <textarea value={newA} onChange={(e) => setNewA(e.target.value)} placeholder="Jawaban" className={`${styles.input} h-20`} />
+              <button onClick={addFAQ} className={`${styles.btn} ${styles.btnPrimary}`}>Tambah FAQ</button>
+            </div>
+
+            <div className={styles.faqListSection}>
+              <div className={styles.faqListHead}>
+                <h3 className="text-sm font-bold text-slate-800">Daftar FAQ</h3>
+                <span className="text-xs text-slate-500">{filteredFaqs.length} item</span>
+              </div>
+
             <div className={styles.faqGrid}>
-              {(showAllFaqs ? faqs : faqs.slice(0, 3)).map((faq) => (
+              {(showAllFaqs ? filteredFaqs : filteredFaqs.slice(0, 3)).map((faq) => (
                 <div key={faq.id} className={`${styles.faqItem} ${editingId === faq.id ? "border-2 border-blue-500 bg-blue-50" : ""}`}>
                   {editingId === faq.id ? (
                     <>
@@ -785,46 +1292,49 @@ export default function DashboardPage() {
                           placeholder="Jawaban"
                         />
                       </div>
-                      <div className="flex gap-2">
+                      <div className={styles.faqActionsRight}>
                         <button
                           onClick={() => updateFAQ(faq.id, editQ, editA)}
-                          className="flex-1 px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded text-sm font-semibold transition"
+                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-sm font-semibold transition"
                         >
                           Simpan
                         </button>
                         <button
                           onClick={cancelEdit}
-                          className="flex-1 px-3 py-1.5 bg-gray-400 hover:bg-gray-500 text-white rounded text-sm font-semibold transition"
+                          className="px-3 py-1.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-sm font-semibold transition"
                         >
                           Batal
                         </button>
                       </div>
                     </>
                   ) : (
-                    <>
-                      <div className={styles.faqQuestion}>{faq.q}</div>
-                      <div className={styles.faqAnswer}>{faq.a}</div>
-                      <div className="flex gap-2 pt-2">
+                    <div className={styles.faqRow}>
+                      <div className={styles.faqBody}>
+                        <div className={styles.faqQuestion}>{faq.q}</div>
+                        <div className={styles.faqAnswer}>{faq.a}</div>
+                      </div>
+                      <div className={styles.faqActionsRight}>
                         <button
                           onClick={() => startEdit(faq)}
-                          className={`flex-1 ${styles.linkInfo}`}
+                          className={styles.actionBtnInfo}
                         >
                           Edit
                         </button>
                         <button
                           onClick={() => deleteFAQ(faq.id)}
-                          className={`flex-1 ${styles.linkDanger}`}
+                          className={styles.actionBtnDanger}
                         >
                           Hapus
                         </button>
                       </div>
-                    </>
+                    </div>
                   )}
                 </div>
               ))}
               {faqs.length === 0 && <p className={styles.muted}>Belum ada FAQ.</p>}
+              {faqs.length > 0 && filteredFaqs.length === 0 && <p className={styles.muted}>FAQ tidak ditemukan untuk kata kunci tersebut.</p>}
             </div>
-            {faqs.length > 3 && (
+            {filteredFaqs.length > 3 && (
               <div className="flex justify-center mt-4">
                 <button
                   className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-semibold transition"
@@ -834,32 +1344,70 @@ export default function DashboardPage() {
                 </button>
               </div>
             )}
-            <div className={styles.formInline}>
-              <input value={newQ} onChange={(e) => setNewQ(e.target.value)} placeholder="Pertanyaan" className={styles.input} />
-              <textarea value={newA} onChange={(e) => setNewA(e.target.value)} placeholder="Jawaban" className={`${styles.input} h-20`} />
-              <button onClick={addFAQ} className={`${styles.btn} ${styles.btnPrimary}`}>Tambah FAQ</button>
             </div>
           </section>
+          )}
 
-          <section id="logs" className={styles.card}>
+          {activeSection === "logs" && (
+          <section className={styles.card}>
             <div className={styles.cardHeader}>
               <h2>Chat Logs (50 terbaru)</h2>
-              <button onClick={deleteAllChatLogs} className={`${styles.btn} ${styles.btnDanger} ${styles.btnGhost}`}>Hapus Semua</button>
+              <div className={styles.cardActions}>
+                <input
+                  value={chatLogSearch}
+                  onChange={(e) => setChatLogSearch(e.target.value)}
+                  placeholder="Cari di pesan user / jawaban bot"
+                  className={styles.input}
+                  aria-label="Cari chat logs"
+                />
+                <button onClick={deleteAllChatLogs} className={`${styles.btn} ${styles.btnDanger} ${styles.btnGhost}`}>Hapus Semua</button>
+              </div>
             </div>
+
+            <div className={styles.logStatsRow}>
+              <div className={styles.logStatCard}>
+                <p>Total Log</p>
+                <strong>{chatLogs.length}</strong>
+                <span>Data percakapan tersimpan</span>
+              </div>
+              <div className={styles.logStatCard}>
+                <p>Chat Hari Ini</p>
+                <strong>{todayChats}</strong>
+                <span>Interaksi tanggal sekarang</span>
+              </div>
+              <div className={styles.logStatCard}>
+                <p>Rata-rata Panjang Pesan</p>
+                <strong>{avgUserMsgLength}</strong>
+                <span>Karakter per pesan user</span>
+              </div>
+              <div className={styles.logStatCard}>
+                <p>Topik Teratas</p>
+                <strong>{topWord}</strong>
+                <span>Kata dominan dari user</span>
+              </div>
+            </div>
+
             <div className={styles.listScroll}>
-              {chatLogs.map((log) => (
-                <div key={log.id} className={styles.listItem}>
-                  <div className="font-semibold text-gray-800">User: {log.user_message}</div>
-                  <div className="text-gray-700">Bot: {log.bot_response}</div>
-                  <div className="text-[11px] text-gray-500">{log.timestamp?.toDate?.().toLocaleString?.() || ""}</div>
-                  <button onClick={() => deleteChatLog(log.id)} className={styles.linkDanger}>Hapus</button>
+              {filteredChatLogs.map((log) => (
+                <div key={log.id} className={`${styles.listItem} ${styles.logItem}`}>
+                  <div className={styles.logBody}>
+                    <div className={styles.logBubbleUser}><span className="font-semibold text-slate-800">User:</span> {log.user_message}</div>
+                    <div className={styles.logBubbleBot}><span className="font-semibold text-slate-800">Bot:</span> {log.bot_response}</div>
+                    <div className="text-[11px] text-gray-500">{log.timestamp?.toDate?.().toLocaleString?.() || ""}</div>
+                  </div>
+                  <div className={styles.logActions}>
+                    <button onClick={() => deleteChatLog(log.id)} className={styles.actionBtnDanger}>Hapus</button>
+                  </div>
                 </div>
               ))}
               {chatLogs.length === 0 && <p className={styles.muted}>Belum ada log.</p>}
+              {chatLogs.length > 0 && filteredChatLogs.length === 0 && <p className={styles.muted}>Log tidak ditemukan untuk kata kunci tersebut.</p>}
             </div>
           </section>
+          )}
 
-          <section id="leads" className={styles.card}>
+          {activeSection === "leads" && (
+          <section className={styles.card}>
             <div className={styles.cardHeader}>
               <h2>Leads</h2>
               <div className={styles.cardActions}>
@@ -873,18 +1421,52 @@ export default function DashboardPage() {
                 <button onClick={exportLeadsToExcel} className={`${styles.btn} ${styles.btnSuccess}`}>Export Leads</button>
               </div>
             </div>
+
+            <div className={styles.logStatsRow}>
+              <div className={styles.logStatCard}>
+                <p>Total Leads</p>
+                <strong>{leads.length}</strong>
+                <span>Semua calon mahasiswa masuk</span>
+              </div>
+              <div className={styles.logStatCard}>
+                <p>Leads Hari Ini</p>
+                <strong>{leadsTodayCount}</strong>
+                <span>Lead baru pada tanggal ini</span>
+              </div>
+              <div className={styles.logStatCard}>
+                <p>Leads 7 Hari</p>
+                <strong>{recentLeads7dCount}</strong>
+                <span>Tren minat seminggu terakhir</span>
+              </div>
+              <div className={styles.logStatCard}>
+                <p>Coverage WhatsApp</p>
+                <strong>{waCoverage}%</strong>
+                <span>{leadsWithWhatsApp} dari {leads.length} lead punya nomor aktif</span>
+              </div>
+            </div>
+
             <div className={styles.listScroll}>
               {filteredLeads.map((lead) => (
-                <div key={lead.id} className={styles.listItem}>
-                  <div className="font-semibold text-gray-800">{lead.nama}</div>
-                  <div className="text-gray-700">{lead.whatsapp}</div>
-                  <div className="text-gray-700">{lead.minat_jurusan}</div>
-                  <div className="text-[11px] text-gray-500">{lead.waktu_daftar?.toDate?.().toLocaleString?.() || ""}</div>
+                <div key={lead.id} className={`${styles.listItem} ${styles.leadItem}`}>
+                  <div className={styles.leadIdentity}>
+                    <div className={styles.leadAvatar}>
+                      {lead.nama?.trim()?.charAt(0)?.toUpperCase() || "?"}
+                    </div>
+                    <div className={styles.leadMainText}>
+                      <div className="font-semibold text-slate-800">{lead.nama || "Tanpa Nama"}</div>
+                      <div className="text-[12px] text-slate-500">{lead.whatsapp || "Nomor belum tersedia"}</div>
+                    </div>
+                  </div>
+                  <div className={styles.leadMetaRight}>
+                    <span className={styles.leadMajorChip}>{lead.minat_jurusan || "Lainnya"}</span>
+                    <span className="text-[11px] text-gray-500">{lead.waktu_daftar?.toDate?.().toLocaleString?.() || ""}</span>
+                  </div>
                 </div>
               ))}
               {filteredLeads.length === 0 && <p className={styles.muted}>Tidak ada data cocok.</p>}
             </div>
           </section>
+          )}
         </main>
       </div>
     </div>
