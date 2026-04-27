@@ -28,18 +28,34 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_API_KEY_1 = os.getenv("GEMINI_API_KEY_1") or os.getenv("GEMINI_API_KEY")
+GEMINI_API_KEY_2 = os.getenv("GEMINI_API_KEY_2")
+GEMINI_API_KEY_3 = os.getenv("GEMINI_API_KEY_3")
 ADMIN_SECRET_TOKEN = os.getenv("ADMIN_SECRET_TOKEN", "rahasiaupj123") 
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_MODEL_DEFAULT = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_MODEL_1 = os.getenv("GEMINI_MODEL_1")
+GEMINI_MODEL_2 = os.getenv("GEMINI_MODEL_2")
+GEMINI_MODEL_3 = os.getenv("GEMINI_MODEL_3")
 
-# Inisialisasi API Gemini
-GEMINI_CLIENT = None
-if GEMINI_API_KEY:
-    GEMINI_CLIENT = genai.Client(api_key=GEMINI_API_KEY)
+# Inisialisasi API Gemini dengan fallback multi-key dan per-key model
+GEMINI_CLIENTS = []
+for key, model in [
+    (GEMINI_API_KEY_1, GEMINI_MODEL_1 or GEMINI_MODEL_DEFAULT),
+    (GEMINI_API_KEY_2, GEMINI_MODEL_2 or GEMINI_MODEL_DEFAULT),
+    (GEMINI_API_KEY_3, GEMINI_MODEL_3 or GEMINI_MODEL_DEFAULT),
+]:
+    if key:
+        GEMINI_CLIENTS.append({"client": genai.Client(api_key=key), "model": model})
 
 def _env_file_path():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     return os.path.join(base_dir, ".env")
+
+
+def _prompt_file_path():
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base_dir, "prompt_rules.txt")
+
 
 def _mask_secret(secret_value):
     if not secret_value:
@@ -75,12 +91,24 @@ def _upsert_env_value(key, value):
         f.writelines(new_lines)
 
 def _reload_runtime_settings():
-    global GEMINI_API_KEY, GEMINI_CLIENT, ADMIN_SECRET_TOKEN, GEMINI_MODEL
+    global GEMINI_API_KEY_1, GEMINI_API_KEY_2, GEMINI_API_KEY_3, GEMINI_CLIENTS, ADMIN_SECRET_TOKEN, GEMINI_MODEL_DEFAULT, GEMINI_MODEL_1, GEMINI_MODEL_2, GEMINI_MODEL_3
     load_dotenv(override=True)
-    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+    GEMINI_API_KEY_1 = os.getenv("GEMINI_API_KEY_1") or os.getenv("GEMINI_API_KEY")
+    GEMINI_API_KEY_2 = os.getenv("GEMINI_API_KEY_2")
+    GEMINI_API_KEY_3 = os.getenv("GEMINI_API_KEY_3")
     ADMIN_SECRET_TOKEN = os.getenv("ADMIN_SECRET_TOKEN", "rahasiaupj123")
-    GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-    GEMINI_CLIENT = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+    GEMINI_MODEL_DEFAULT = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    GEMINI_MODEL_1 = os.getenv("GEMINI_MODEL_1")
+    GEMINI_MODEL_2 = os.getenv("GEMINI_MODEL_2")
+    GEMINI_MODEL_3 = os.getenv("GEMINI_MODEL_3")
+    GEMINI_CLIENTS = []
+    for key, model in [
+        (GEMINI_API_KEY_1, GEMINI_MODEL_1 or GEMINI_MODEL_DEFAULT),
+        (GEMINI_API_KEY_2, GEMINI_MODEL_2 or GEMINI_MODEL_DEFAULT),
+        (GEMINI_API_KEY_3, GEMINI_MODEL_3 or GEMINI_MODEL_DEFAULT),
+    ]:
+        if key:
+            GEMINI_CLIENTS.append({"client": genai.Client(api_key=key), "model": model})
 
 def _is_admin_authorized(req):
     token = req.headers.get("Authorization", "")
@@ -193,29 +221,59 @@ def format_response_html(text):
     return text
 
 def get_system_prompt():
-    current_data = load_knowledge_base() 
+    current_data = load_knowledge_base()
     data_str = json.dumps(current_data, ensure_ascii=False)
-    
+
     try:
         base_dir = os.path.dirname(os.path.abspath(__file__))
         prompt_path = os.path.join(base_dir, "prompt_rules.txt")
-        
+
         with open(prompt_path, "r", encoding="utf-8") as file:
             prompt_template = file.read()
-            
+
         final_prompt = prompt_template.replace("{knowledge_base}", data_str)
         return final_prompt
-        
     except Exception as e:
         logger.error(f"❌ Gagal membaca prompt_rules.txt: {e}")
         return f"PERAN: Asisten Virtual Admisi UPJ.\nDATA: {data_str}"
+
+
+def _generate_with_fallback(contents, config=None):
+    if not GEMINI_CLIENTS:
+        raise RuntimeError("Mohon maaf, API Key belum dikonfigurasi.")
+
+    last_error = None
+    for idx, item in enumerate(GEMINI_CLIENTS, start=1):
+        client = item["client"]
+        key_model = item.get("model") or GEMINI_MODEL_DEFAULT
+        try:
+            request_kwargs = {
+                "model": key_model,
+                "contents": contents,
+            }
+            if config is not None:
+                request_kwargs["config"] = config
+
+            response = client.models.generate_content(**request_kwargs)
+            text = getattr(response, "text", "")
+            if text and text.strip():
+                logger.info(f"✅ Gemini API key {idx} berhasil digunakan dengan model {key_model}.")
+                return response
+            logger.warning(f"⚠️ Gemini API key {idx} merespons kosong, mencoba key selanjutnya.")
+        except Exception as e:
+            last_error = e
+            logger.warning(f"⚠️ Gemini API key {idx} gagal: {e}")
+            continue
+
+    raise RuntimeError(f"Semua API key gagal. Terakhir: {last_error}")
 
 
 # =====================================================================
 # 5. FUNGSI PANGGIL AI (HANYA GEMINI)
 # =====================================================================
 def call_ai(user_msg, history=[]):
-    if not GEMINI_CLIENT: return "Mohon maaf, API Key belum dikonfigurasi."
+    if not GEMINI_CLIENTS:
+        return "Mohon maaf, API Key belum dikonfigurasi."
     try:
         formatted_contents = []
 
@@ -239,8 +297,7 @@ def call_ai(user_msg, history=[]):
             temperature=0.2,
         )
 
-        response = GEMINI_CLIENT.models.generate_content(
-            model=GEMINI_MODEL,
+        response = _generate_with_fallback(
             contents=formatted_contents,
             config=config
         )
@@ -314,11 +371,71 @@ def get_admin_settings():
     return jsonify({
         "status": "success",
         "data": {
-            "gemini_api_key_set": bool(GEMINI_API_KEY),
-            "gemini_api_key_masked": _mask_secret(GEMINI_API_KEY),
-            "gemini_model": GEMINI_MODEL,
+            "gemini_api_key_1_set": bool(GEMINI_API_KEY_1),
+            "gemini_api_key_1_masked": _mask_secret(GEMINI_API_KEY_1),
+            "gemini_api_key_2_set": bool(GEMINI_API_KEY_2),
+            "gemini_api_key_2_masked": _mask_secret(GEMINI_API_KEY_2),
+            "gemini_api_key_3_set": bool(GEMINI_API_KEY_3),
+            "gemini_api_key_3_masked": _mask_secret(GEMINI_API_KEY_3),
+            "gemini_model_default": GEMINI_MODEL_DEFAULT,
+            "gemini_model_1": GEMINI_MODEL_1,
+            "gemini_model_2": GEMINI_MODEL_2,
+            "gemini_model_3": GEMINI_MODEL_3,
+            "gemini_model": GEMINI_MODEL_DEFAULT,
         }
     })
+
+
+@app.route("/api/admin/prompt", methods=["GET"])
+def get_admin_prompt():
+    if not _is_admin_authorized(request):
+        return jsonify({"error": "Akses Ditolak!"}), 401
+
+    prompt_path = _prompt_file_path()
+    try:
+        if not os.path.exists(prompt_path):
+            return jsonify({"status": "success", "data": {"prompt_text": ""}})
+
+        with open(prompt_path, "r", encoding="utf-8") as f:
+            prompt_content = f.read()
+
+        return jsonify({
+            "status": "success",
+            "data": {
+                "prompt_text": prompt_content,
+            }
+        })
+    except Exception as e:
+        logger.error(f"❌ Gagal membaca prompt admin: {e}")
+        return jsonify({"error": "Gagal membaca system prompt."}), 500
+
+
+@app.route("/api/admin/prompt", methods=["POST"])
+def update_admin_prompt():
+    if not _is_admin_authorized(request):
+        return jsonify({"error": "Akses Ditolak!"}), 401
+
+    data = request.json or {}
+    prompt_text = data.get("prompt_text")
+
+    if prompt_text is None:
+        return jsonify({"error": "Data prompt tidak ditemukan."}), 400
+
+    prompt_path = _prompt_file_path()
+    try:
+        with open(prompt_path, "w", encoding="utf-8") as f:
+            f.write(str(prompt_text))
+
+        return jsonify({
+            "status": "success",
+            "message": "System prompt berhasil disimpan.",
+            "data": {
+                "prompt_text": prompt_text,
+            }
+        })
+    except Exception as e:
+        logger.error(f"❌ Gagal menyimpan prompt admin: {e}")
+        return jsonify({"error": "Gagal menyimpan system prompt."}), 500
 
 
 @app.route("/api/admin/settings", methods=["POST"])
@@ -327,21 +444,42 @@ def update_admin_settings():
         return jsonify({"error": "Akses Ditolak!"}), 401
 
     data = request.json or {}
-    gemini_api_key = data.get("gemini_api_key")
-    gemini_model = data.get("gemini_model")
+    gemini_api_key_1 = data.get("gemini_api_key_1")
+    gemini_api_key_2 = data.get("gemini_api_key_2")
+    gemini_api_key_3 = data.get("gemini_api_key_3")
+    gemini_model_default = data.get("gemini_model_default")
+    gemini_model_1 = data.get("gemini_model_1")
+    gemini_model_2 = data.get("gemini_model_2")
+    gemini_model_3 = data.get("gemini_model_3")
 
-    if gemini_api_key is None and gemini_model is None:
+    if gemini_api_key_1 is None and gemini_api_key_2 is None and gemini_api_key_3 is None \
+        and gemini_model_default is None and gemini_model_1 is None and gemini_model_2 is None and gemini_model_3 is None:
         return jsonify({"error": "Data pengaturan tidak ditemukan."}), 400
 
     try:
-        if gemini_api_key is not None:
-            _upsert_env_value("GEMINI_API_KEY", str(gemini_api_key).strip())
+        if gemini_api_key_1 is not None:
+            _upsert_env_value("GEMINI_API_KEY_1", str(gemini_api_key_1).strip())
 
-        if gemini_model is not None:
-            clean_model = str(gemini_model).strip()
+        if gemini_api_key_2 is not None:
+            _upsert_env_value("GEMINI_API_KEY_2", str(gemini_api_key_2).strip())
+
+        if gemini_api_key_3 is not None:
+            _upsert_env_value("GEMINI_API_KEY_3", str(gemini_api_key_3).strip())
+
+        if gemini_model_default is not None:
+            clean_model = str(gemini_model_default).strip()
             if not clean_model:
                 clean_model = "gemini-2.5-flash"
             _upsert_env_value("GEMINI_MODEL", clean_model)
+
+        if gemini_model_1 is not None:
+            _upsert_env_value("GEMINI_MODEL_1", str(gemini_model_1).strip())
+
+        if gemini_model_2 is not None:
+            _upsert_env_value("GEMINI_MODEL_2", str(gemini_model_2).strip())
+
+        if gemini_model_3 is not None:
+            _upsert_env_value("GEMINI_MODEL_3", str(gemini_model_3).strip())
 
         _reload_runtime_settings()
 
@@ -349,9 +487,17 @@ def update_admin_settings():
             "status": "success",
             "message": "Pengaturan API berhasil disimpan dan diterapkan.",
             "data": {
-                "gemini_api_key_set": bool(GEMINI_API_KEY),
-                "gemini_api_key_masked": _mask_secret(GEMINI_API_KEY),
-                "gemini_model": GEMINI_MODEL,
+                "gemini_api_key_1_set": bool(GEMINI_API_KEY_1),
+                "gemini_api_key_1_masked": _mask_secret(GEMINI_API_KEY_1),
+                "gemini_api_key_2_set": bool(GEMINI_API_KEY_2),
+                "gemini_api_key_2_masked": _mask_secret(GEMINI_API_KEY_2),
+                "gemini_api_key_3_set": bool(GEMINI_API_KEY_3),
+                "gemini_api_key_3_masked": _mask_secret(GEMINI_API_KEY_3),
+                "gemini_model_default": GEMINI_MODEL_DEFAULT,
+                "gemini_model_1": GEMINI_MODEL_1,
+                "gemini_model_2": GEMINI_MODEL_2,
+                "gemini_model_3": GEMINI_MODEL_3,
+                "gemini_model": GEMINI_MODEL_DEFAULT,
             }
         })
     except Exception as e:
@@ -383,7 +529,7 @@ def api_scrape():
     if not target_url.startswith(('http://', 'https://')):
         return jsonify({"error": "URL harus dimulai dengan http:// atau https://"}), 400
 
-    if not GEMINI_CLIENT:
+    if not GEMINI_CLIENTS:
         return jsonify({"error": "GEMINI_API_KEY belum dikonfigurasi."}), 400
 
     logger.info(f"🌍 Menerima request scraping untuk URL: {target_url}")
@@ -411,8 +557,7 @@ def api_scrape():
         TIDAK BOLEH ADA TEKS LAIN SELAIN JSON! JANGAN gunakan blok kode markdown.
         """
         
-        ai_response = GEMINI_CLIENT.models.generate_content(
-            model=GEMINI_MODEL,
+        ai_response = _generate_with_fallback(
             contents=prompt,
         )
 

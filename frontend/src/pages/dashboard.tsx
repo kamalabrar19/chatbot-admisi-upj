@@ -61,12 +61,28 @@ export default function DashboardPage() {
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [settingsStatus, setSettingsStatus] = useState({ type: "", text: "" });
+  const [promptLoading, setPromptLoading] = useState(false);
+  const [promptSaving, setPromptSaving] = useState(false);
+  const [promptStatus, setPromptStatus] = useState({ type: "", text: "" });
   const [settingsData, setSettingsData] = useState({
-    geminiApiKey: "",
-    geminiModel: "gemini-2.5-flash",
-    currentMaskedKey: "",
-    isKeySet: false,
+    geminiApiKey1: "",
+    geminiApiKey2: "",
+    geminiApiKey3: "",
+    geminiModelDefault: "gemini-2.5-flash",
+    geminiModel1: "",
+    geminiModel2: "",
+    geminiModel3: "",
+    currentMaskedKey1: "",
+    currentMaskedKey2: "",
+    currentMaskedKey3: "",
+    currentModel1: "",
+    currentModel2: "",
+    currentModel3: "",
+    isKey1Set: false,
+    isKey2Set: false,
+    isKey3Set: false,
   });
+  const [promptText, setPromptText] = useState("");
 
   // FAQ show more/less state
   const [showAllFaqs, setShowAllFaqs] = useState(false);
@@ -355,9 +371,16 @@ export default function DashboardPage() {
 
       setSettingsData((prev) => ({
         ...prev,
-        geminiModel: payload.data?.gemini_model || "gemini-2.5-flash",
-        currentMaskedKey: payload.data?.gemini_api_key_masked || "",
-        isKeySet: Boolean(payload.data?.gemini_api_key_set),
+        geminiModelDefault: payload.data?.gemini_model_default || "gemini-2.5-flash",
+        currentMaskedKey1: payload.data?.gemini_api_key_1_masked || "",
+        currentMaskedKey2: payload.data?.gemini_api_key_2_masked || "",
+        currentMaskedKey3: payload.data?.gemini_api_key_3_masked || "",
+        currentModel1: payload.data?.gemini_model_1 || "",
+        currentModel2: payload.data?.gemini_model_2 || "",
+        currentModel3: payload.data?.gemini_model_3 || "",
+        isKey1Set: Boolean(payload.data?.gemini_api_key_1_set),
+        isKey2Set: Boolean(payload.data?.gemini_api_key_2_set),
+        isKey3Set: Boolean(payload.data?.gemini_api_key_3_set),
       }));
     } catch (error) {
       setSettingsStatus({ type: "error", text: "Gagal menghubungi backend settings API." });
@@ -377,11 +400,26 @@ export default function DashboardPage() {
       }
 
       const body: any = {
-        gemini_model: settingsData.geminiModel,
+        gemini_model_default: settingsData.geminiModelDefault,
       };
 
-      if (settingsData.geminiApiKey.trim()) {
-        body.gemini_api_key = settingsData.geminiApiKey.trim();
+      if (settingsData.geminiApiKey1.trim()) {
+        body.gemini_api_key_1 = settingsData.geminiApiKey1.trim();
+      }
+      if (settingsData.geminiApiKey2.trim()) {
+        body.gemini_api_key_2 = settingsData.geminiApiKey2.trim();
+      }
+      if (settingsData.geminiApiKey3.trim()) {
+        body.gemini_api_key_3 = settingsData.geminiApiKey3.trim();
+      }
+      if (settingsData.geminiModel1.trim()) {
+        body.gemini_model_1 = settingsData.geminiModel1.trim();
+      }
+      if (settingsData.geminiModel2.trim()) {
+        body.gemini_model_2 = settingsData.geminiModel2.trim();
+      }
+      if (settingsData.geminiModel3.trim()) {
+        body.gemini_model_3 = settingsData.geminiModel3.trim();
       }
 
       const res = await fetch("http://localhost:5000/api/admin/settings", {
@@ -401,10 +439,22 @@ export default function DashboardPage() {
 
       setSettingsData((prev) => ({
         ...prev,
-        geminiApiKey: "",
-        currentMaskedKey: payload.data?.gemini_api_key_masked || prev.currentMaskedKey,
-        isKeySet: Boolean(payload.data?.gemini_api_key_set),
-        geminiModel: payload.data?.gemini_model || prev.geminiModel,
+        geminiApiKey1: "",
+        geminiApiKey2: "",
+        geminiApiKey3: "",
+        geminiModel1: "",
+        geminiModel2: "",
+        geminiModel3: "",
+        currentMaskedKey1: payload.data?.gemini_api_key_1_masked || prev.currentMaskedKey1,
+        currentMaskedKey2: payload.data?.gemini_api_key_2_masked || prev.currentMaskedKey2,
+        currentMaskedKey3: payload.data?.gemini_api_key_3_masked || prev.currentMaskedKey3,
+        currentModel1: payload.data?.gemini_model_1 || prev.currentModel1,
+        currentModel2: payload.data?.gemini_model_2 || prev.currentModel2,
+        currentModel3: payload.data?.gemini_model_3 || prev.currentModel3,
+        isKey1Set: Boolean(payload.data?.gemini_api_key_1_set),
+        isKey2Set: Boolean(payload.data?.gemini_api_key_2_set),
+        isKey3Set: Boolean(payload.data?.gemini_api_key_3_set),
+        geminiModelDefault: payload.data?.gemini_model_default || prev.geminiModelDefault,
       }));
       setSettingsStatus({ type: "success", text: payload.message || "Pengaturan API berhasil disimpan." });
     } catch (error) {
@@ -414,9 +464,77 @@ export default function DashboardPage() {
     }
   };
 
+  const fetchSystemPrompt = async () => {
+    setPromptLoading(true);
+    setPromptStatus({ type: "", text: "" });
+    try {
+      const token = process.env.NEXT_PUBLIC_ADMIN_SECRET_TOKEN;
+      if (!token) {
+        setPromptStatus({ type: "error", text: "Token admin frontend belum diatur (NEXT_PUBLIC_ADMIN_SECRET_TOKEN)." });
+        return;
+      }
+
+      const res = await fetch("http://localhost:5000/api/admin/prompt", {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+      });
+
+      const payload = await res.json();
+      if (!res.ok || payload.status !== "success") {
+        setPromptStatus({ type: "error", text: payload.error || "Gagal mengambil system prompt." });
+        return;
+      }
+
+      setPromptText(payload.data?.prompt_text || "");
+    } catch (error) {
+      setPromptStatus({ type: "error", text: "Gagal menghubungi backend system prompt." });
+    } finally {
+      setPromptLoading(false);
+    }
+  };
+
+  const saveSystemPrompt = async () => {
+    setPromptSaving(true);
+    setPromptStatus({ type: "", text: "" });
+    try {
+      const token = process.env.NEXT_PUBLIC_ADMIN_SECRET_TOKEN;
+      if (!token) {
+        setPromptStatus({ type: "error", text: "Token admin frontend belum diatur (NEXT_PUBLIC_ADMIN_SECRET_TOKEN)." });
+        return;
+      }
+
+      const res = await fetch("http://localhost:5000/api/admin/prompt", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ prompt_text: promptText }),
+      });
+
+      const payload = await res.json();
+      if (!res.ok || payload.status !== "success") {
+        setPromptStatus({ type: "error", text: payload.error || "Gagal menyimpan system prompt." });
+        return;
+      }
+
+      setPromptStatus({ type: "success", text: payload.message || "System prompt berhasil disimpan." });
+    } catch (error) {
+      setPromptStatus({ type: "error", text: "Terjadi gangguan saat menyimpan system prompt." });
+    } finally {
+      setPromptSaving(false);
+    }
+  };
+
   useEffect(() => {
     if (activeSection === "settings") {
       fetchAdminSettings();
+    }
+    if (activeSection === "prompt") {
+      fetchSystemPrompt();
     }
   }, [activeSection]);
 
@@ -565,6 +683,7 @@ export default function DashboardPage() {
     { id: "logs", label: "Chat Logs" },
     { id: "leads", label: "Leads" },
     { id: "settings", label: "Settings API" },
+    { id: "prompt", label: "System Prompt" },
   ];
 
   const helpfulCount = feedbacks.filter((f) => f.isHelpful).length;
@@ -1090,9 +1209,16 @@ export default function DashboardPage() {
               <div className={styles.settingsInfoCard}>
                 <p className="text-xs uppercase tracking-[0.12em] text-slate-500 font-semibold">Status Saat Ini</p>
                 <div className="mt-3 space-y-2 text-sm">
-                  <p><span className="font-semibold text-slate-700">GEMINI_API_KEY:</span> {settingsData.isKeySet ? "Tersimpan" : "Belum diatur"}</p>
-                  <p><span className="font-semibold text-slate-700">Key Aktif:</span> {settingsData.currentMaskedKey || "-"}</p>
-                  <p><span className="font-semibold text-slate-700">Model:</span> {settingsData.geminiModel || "gemini-2.5-flash"}</p>
+                  <p><span className="font-semibold text-slate-700">GEMINI_API_KEY_1:</span> {settingsData.isKey1Set ? "Tersimpan" : "Belum diatur"}</p>
+                  <p><span className="font-semibold text-slate-700">GEMINI_API_KEY_2:</span> {settingsData.isKey2Set ? "Tersimpan" : "Belum diatur"}</p>
+                  <p><span className="font-semibold text-slate-700">GEMINI_API_KEY_3:</span> {settingsData.isKey3Set ? "Tersimpan" : "Belum diatur"}</p>
+                  <p><span className="font-semibold text-slate-700">Key 1:</span> {settingsData.currentMaskedKey1 || "-"}</p>
+                  <p><span className="font-semibold text-slate-700">Key 2:</span> {settingsData.currentMaskedKey2 || "-"}</p>
+                  <p><span className="font-semibold text-slate-700">Key 3:</span> {settingsData.currentMaskedKey3 || "-"}</p>
+                  <p><span className="font-semibold text-slate-700">Model Default:</span> {settingsData.geminiModelDefault || "gemini-2.5-flash"}</p>
+                  <p><span className="font-semibold text-slate-700">Model 1:</span> {settingsData.currentModel1 || settingsData.geminiModelDefault || "gemini-2.5-flash"}</p>
+                  <p><span className="font-semibold text-slate-700">Model 2:</span> {settingsData.currentModel2 || settingsData.geminiModelDefault || "gemini-2.5-flash"}</p>
+                  <p><span className="font-semibold text-slate-700">Model 3:</span> {settingsData.currentModel3 || settingsData.geminiModelDefault || "gemini-2.5-flash"}</p>
                 </div>
                 <button
                   type="button"
@@ -1105,26 +1231,67 @@ export default function DashboardPage() {
               </div>
 
               <div className={styles.settingsFormCard}>
-                <label className="text-xs font-semibold text-slate-700">GEMINI API KEY (opsional)</label>
+                <label className="text-xs font-semibold text-slate-700">GEMINI API KEY 1</label>
                 <input
                   type="password"
-                  value={settingsData.geminiApiKey}
-                  onChange={(e) => setSettingsData((prev) => ({ ...prev, geminiApiKey: e.target.value }))}
-                  placeholder="Masukkan API key baru (kosongkan jika tidak diubah)"
+                  value={settingsData.geminiApiKey1}
+                  onChange={(e) => setSettingsData((prev) => ({ ...prev, geminiApiKey1: e.target.value }))}
+                  placeholder="Masukkan API key utama (kosongkan jika tidak diubah)"
+                  className={styles.input}
+                />
+                <label className="text-xs font-semibold text-slate-700 mt-3">GEMINI API KEY 2</label>
+                <input
+                  type="password"
+                  value={settingsData.geminiApiKey2}
+                  onChange={(e) => setSettingsData((prev) => ({ ...prev, geminiApiKey2: e.target.value }))}
+                  placeholder="Masukkan key cadangan kedua"
+                  className={styles.input}
+                />
+                <label className="text-xs font-semibold text-slate-700 mt-3">GEMINI API KEY 3</label>
+                <input
+                  type="password"
+                  value={settingsData.geminiApiKey3}
+                  onChange={(e) => setSettingsData((prev) => ({ ...prev, geminiApiKey3: e.target.value }))}
+                  placeholder="Masukkan key cadangan ketiga"
                   className={styles.input}
                 />
 
-                <label className="text-xs font-semibold text-slate-700 mt-3">Model Gemini</label>
+                <label className="text-xs font-semibold text-slate-700 mt-3">Model Default Gemini</label>
                 <input
                   type="text"
-                  value={settingsData.geminiModel}
-                  onChange={(e) => setSettingsData((prev) => ({ ...prev, geminiModel: e.target.value }))}
+                  value={settingsData.geminiModelDefault}
+                  onChange={(e) => setSettingsData((prev) => ({ ...prev, geminiModelDefault: e.target.value }))}
+                  placeholder="Contoh: gemini-2.5-flash"
+                  className={styles.input}
+                />
+
+                <label className="text-xs font-semibold text-slate-700 mt-3">Model Key 1 (opsional)</label>
+                <input
+                  type="text"
+                  value={settingsData.geminiModel1}
+                  onChange={(e) => setSettingsData((prev) => ({ ...prev, geminiModel1: e.target.value }))}
+                  placeholder="Contoh: gemini-2.5-flash"
+                  className={styles.input}
+                />
+                <label className="text-xs font-semibold text-slate-700 mt-3">Model Key 2 (opsional)</label>
+                <input
+                  type="text"
+                  value={settingsData.geminiModel2}
+                  onChange={(e) => setSettingsData((prev) => ({ ...prev, geminiModel2: e.target.value }))}
+                  placeholder="Contoh: gemini-2.5-flash"
+                  className={styles.input}
+                />
+                <label className="text-xs font-semibold text-slate-700 mt-3">Model Key 3 (opsional)</label>
+                <input
+                  type="text"
+                  value={settingsData.geminiModel3}
+                  onChange={(e) => setSettingsData((prev) => ({ ...prev, geminiModel3: e.target.value }))}
                   placeholder="Contoh: gemini-2.5-flash"
                   className={styles.input}
                 />
 
                 <div className="mt-3 p-3 rounded-xl border border-amber-100 bg-amber-50 text-[12px] text-amber-800">
-                  Setelah disimpan, backend akan reload konfigurasi runtime otomatis. Tidak perlu edit file `.env` manual.
+                  Setelah disimpan, backend akan reload konfigurasi runtime otomatis. Urutan fallback: key 1 → key 2 → key 3. Setiap key dapat memiliki model berbeda; model default berlaku jika model key khusus tidak diisi.
                 </div>
 
                 <div className="mt-4 flex gap-2">
@@ -1145,6 +1312,46 @@ export default function DashboardPage() {
                 {settingsStatus.text}
               </div>
             )}
+          </section>
+          )}
+
+          {activeSection === "prompt" && (
+          <section className={styles.card}>
+            <div className={styles.cardHeader}>
+              <div>
+                <h2>System Prompt</h2>
+                <span className={styles.subtle}>Ubah teks prompt sistem yang dipakai Gemini saat menjawab.</span>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <textarea
+                value={promptText}
+                onChange={(e) => setPromptText(e.target.value)}
+                placeholder="Masukkan system prompt untuk Gemini..."
+                className="w-full min-h-[260px] p-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+              />
+
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="text-sm text-slate-600">
+                  System prompt ini akan disimpan ke file <code>prompt_rules.txt</code> dan digunakan oleh backend saat memformat percakapan.
+                </div>
+                <button
+                  type="button"
+                  onClick={saveSystemPrompt}
+                  disabled={promptSaving}
+                  className={`${styles.btn} ${styles.btnPrimary}`}
+                >
+                  {promptSaving ? "Menyimpan..." : "Simpan System Prompt"}
+                </button>
+              </div>
+
+              {promptStatus.text && (
+                <div className={`rounded-xl p-3 text-sm font-medium ${promptStatus.type === "error" ? "bg-rose-100 text-rose-700" : "bg-emerald-100 text-emerald-700"}`}>
+                  {promptStatus.text}
+                </div>
+              )}
+            </div>
           </section>
           )}
 
