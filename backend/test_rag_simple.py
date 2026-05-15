@@ -1,8 +1,3 @@
-# =========================================================
-# test_rag_simple.py
-# RAG Testing Suite - Chatbot Admisi UPJ
-# =========================================================
-
 import unittest
 import json
 import time
@@ -19,10 +14,6 @@ from app import (
     format_response_html,
 )
 
-# =========================================================
-# HELPER FUNCTIONS
-# =========================================================
-
 def normalize_text(text):
     """
     Normalize text untuk deduplication & comparison
@@ -30,10 +21,8 @@ def normalize_text(text):
 
     text = text.lower().strip()
 
-    # hapus simbol
     text = re.sub(r"[^\w\s]", "", text)
 
-    # rapihin spasi
     text = re.sub(r"\s+", " ", text)
 
     return text
@@ -178,10 +167,6 @@ def detect_hallucination(response, kb_text):
 
     return round(confidence, 2)
 
-
-# =========================================================
-# TEST CLASS
-# =========================================================
 
 class TestRAGSystem(unittest.TestCase):
 
@@ -699,10 +684,6 @@ class TestRAGSystem(unittest.TestCase):
             60
         )
 
-
-# =========================================================
-# MAIN
-# =========================================================
 
 if __name__ == "__main__":
 
