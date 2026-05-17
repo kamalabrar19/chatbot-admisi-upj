@@ -10,6 +10,7 @@ import re
 import time
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup
+from urllib.parse import urljoin, urlparse
 import firebase_admin
 from firebase_admin import credentials, firestore
 from google import genai
@@ -534,12 +535,145 @@ def api_scrape():
 
     logger.info(f"🌍 Menerima request scraping untuk URL: {target_url}")
 
-    try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-        response = requests.get(target_url, headers=headers)
-        soup = BeautifulSoup(response.text, 'html.parser')
+    scope = data.get("scope", "exact")
+    if scope not in {"exact", "path"}:
+        return jsonify({"error": "Scope scraping tidak valid."}), 400
+
+    def extract_page_text(html: str) -> tuple[str, BeautifulSoup]:
+        soup = BeautifulSoup(html, 'html.parser')
         paragraphs = soup.find_all(['p', 'h1', 'h2', 'h3', 'li'])
         raw_text = " ".join([p.get_text(strip=True) for p in paragraphs])
+        return raw_text, soup
+
+    def collect_scoped_content(url: str, crawl_scope: str, max_pages: int = 10) -> tuple[str, list[str]]:
+        from urllib.parse import urljoin as _urljoin, urlparse as _urlparse
+
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+
+        if crawl_scope == "exact":
+            response = requests.get(url, headers=headers)
+            raw_text, _ = extract_page_text(response.text)
+            return raw_text, [url]
+
+        parsed_start = _urlparse(url)
+        path_prefix = parsed_start.path.rstrip("/")
+
+        if not path_prefix:
+            response = requests.get(url, headers=headers)
+            raw_text, _ = extract_page_text(response.text)
+            return raw_text, [url]
+
+        path_prefix = path_prefix + "/"
+        visited_links = set()
+        queue = [url]
+        collected_texts = []
+        visited_pages = []
+        skip_ext = {".pdf", ".jpg", ".png", ".zip", ".mp4", ".doc", ".docx", ".xls", ".xlsx"}
+
+        while queue and len(visited_links) < max_pages:
+            current_url = queue.pop(0).split("#")[0].rstrip("/")
+            if current_url in visited_links:
+                continue
+
+            response = requests.get(current_url, headers=headers)
+            visited_links.add(current_url)
+            visited_pages.append(current_url)
+
+            raw_text, soup = extract_page_text(response.text)
+            if raw_text:
+                collected_texts.append(raw_text)
+
+            if soup and len(visited_links) < max_pages:
+                for anchor in soup.find_all("a", href=True)[:40]:
+                    link = _urljoin(current_url, anchor["href"]).split("#")[0].rstrip("/")
+                    parsed_link = _urlparse(link)
+                    if parsed_link.netloc != parsed_start.netloc:
+                        continue
+                    if not parsed_link.path.startswith(path_prefix):
+                        continue
+                    if any(link.lower().endswith(ext) for ext in skip_ext):
+                        continue
+                    if link not in visited_links and link not in queue:
+                        queue.append(link)
+
+        return " ".join(collected_texts), visited_pages
+
+    def build_scrape_metrics(source_text: str, faqs: list[dict]) -> dict:
+        total_faqs = len(faqs)
+        valid_pairs = 0
+        questions_with_question_mark = 0
+        total_question_length = 0
+        total_answer_length = 0
+        non_empty_answers = 0
+
+        for item in faqs:
+            question = str(item.get("q", "")).strip() if isinstance(item, dict) else ""
+            answer = str(item.get("a", "")).strip() if isinstance(item, dict) else ""
+
+            if question and answer:
+                valid_pairs += 1
+
+            if question:
+                total_question_length += len(question)
+                if "?" in question:
+                    questions_with_question_mark += 1
+
+            if answer:
+                total_answer_length += len(answer)
+                non_empty_answers += 1
+
+        completeness_rate = round((valid_pairs / total_faqs) * 100, 1) if total_faqs else 0.0
+        question_format_rate = round((questions_with_question_mark / total_faqs) * 100, 1) if total_faqs else 0.0
+        answer_completeness_rate = round((non_empty_answers / total_faqs) * 100, 1) if total_faqs else 0.0
+        avg_question_length = round(total_question_length / total_faqs, 1) if total_faqs else 0.0
+        avg_answer_length = round(total_answer_length / total_faqs, 1) if total_faqs else 0.0
+
+        if avg_answer_length <= 0:
+            answer_depth_score = 0.0
+        elif avg_answer_length < 30:
+            answer_depth_score = round((avg_answer_length / 30) * 100, 1)
+        elif avg_answer_length <= 220:
+            answer_depth_score = 100.0
+        elif avg_answer_length <= 500:
+            answer_depth_score = round(max(40.0, 100 - ((avg_answer_length - 220) / 280) * 60), 1)
+        else:
+            answer_depth_score = 40.0
+
+        source_length_score = round(min(len(source_text) / 200, 100.0), 1)
+        quality_score = round(
+            (completeness_rate * 0.35)
+            + (question_format_rate * 0.20)
+            + (answer_depth_score * 0.25)
+            + (source_length_score * 0.20),
+            1,
+        )
+
+        if quality_score >= 80:
+            quality_label = "Sangat baik"
+        elif quality_score >= 60:
+            quality_label = "Baik"
+        elif quality_score >= 40:
+            quality_label = "Cukup"
+        else:
+            quality_label = "Perlu cek ulang"
+
+        return {
+            "quality_score": quality_score,
+            "quality_label": quality_label,
+            "completeness_rate": completeness_rate,
+            "question_format_rate": question_format_rate,
+            "answer_completeness_rate": answer_completeness_rate,
+            "avg_question_length": avg_question_length,
+            "avg_answer_length": avg_answer_length,
+            "source_text_length": len(source_text),
+            "source_length_score": source_length_score,
+            "faq_count": total_faqs,
+            "valid_pairs": valid_pairs,
+            "note": "Skor ini bersifat heuristik, bukan akurasi ilmiah.",
+        }
+
+    try:
+        raw_text, visited_pages = collect_scoped_content(target_url, scope)
 
         if not raw_text or len(raw_text) < 100:
             return jsonify({"error": "Gagal mengambil teks atau teks terlalu pendek."}), 400
@@ -590,6 +724,8 @@ def api_scrape():
             global FAQ_CACHE, LAST_FETCH_TIME
             FAQ_CACHE = None
             LAST_FETCH_TIME = 0
+
+            metrics = build_scrape_metrics(raw_text[:20000], result["faqs"])
             
             logger.info(f"✅ Scraping sukses: {len(result['faqs'])} FAQ generated")
             
@@ -598,9 +734,14 @@ def api_scrape():
                 "message": result["message"],
                 "data": result["faqs"],
                 "count": len(result["faqs"]),
+                "scope": scope,
+                "pages_scanned": len(visited_pages),
+                "pages": visited_pages,
+                "metrics": metrics,
                 "debug": result.get("debug", "")
             }), 200
         else:
+            metrics = build_scrape_metrics(raw_text[:20000], [])
             logger.warning(f"⚠️ Scraping gagal: {result.get('error', 'Unknown error')}")
             
             return jsonify({
@@ -609,6 +750,10 @@ def api_scrape():
                 "error": result.get("error"),
                 "data": [],
                 "count": 0,
+                "scope": scope,
+                "pages_scanned": len(visited_pages),
+                "pages": visited_pages,
+                "metrics": metrics,
                 "debug": result.get("debug", "")
             }), 400
 
@@ -624,6 +769,23 @@ def api_scrape():
             "error": error_msg,
             "data": [],
             "count": 0,
+            "scope": scope,
+            "pages_scanned": 0,
+            "pages": [],
+            "metrics": {
+                "quality_score": 0.0,
+                "quality_label": "Gagal",
+                "completeness_rate": 0.0,
+                "question_format_rate": 0.0,
+                "answer_completeness_rate": 0.0,
+                "avg_question_length": 0.0,
+                "avg_answer_length": 0.0,
+                "source_text_length": 0,
+                "source_length_score": 0.0,
+                "faq_count": 0,
+                "valid_pairs": 0,
+                "note": "Skor ini bersifat heuristik, bukan akurasi ilmiah.",
+            },
             "debug": f"Exception: {error_msg}"
         }), 500
 

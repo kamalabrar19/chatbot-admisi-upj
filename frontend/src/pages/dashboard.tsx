@@ -53,6 +53,23 @@ export default function DashboardPage() {
   const [isScraping, setIsScraping] = useState(false);
   const [isSavingScrape, setIsSavingScrape] = useState(false);
   const [previewData, setPreviewData] = useState<{ q: string; a: string }[]>([]);
+  const [scrapeScope, setScrapeScope] = useState<"exact" | "path">("exact");
+  const [scrapeMetrics, setScrapeMetrics] = useState<{
+    quality_score: number;
+    quality_label: string;
+    completeness_rate: number;
+    question_format_rate: number;
+    answer_completeness_rate: number;
+    avg_question_length: number;
+    avg_answer_length: number;
+    source_text_length: number;
+    source_length_score: number;
+    faq_count: number;
+    valid_pairs: number;
+    scope: "exact" | "path";
+    pages_scanned: number;
+    note: string;
+  } | null>(null);
   const [scrapeStatus, setScrapeStatus] = useState({ type: "", text: "" });
 
   // ==========================================
@@ -273,15 +290,31 @@ export default function DashboardPage() {
           "Content-Type": "application/json",
           "Authorization": `Bearer ${process.env.NEXT_PUBLIC_ADMIN_SECRET_TOKEN}`
         },
-        body: JSON.stringify({ url: scrapeUrl }),
+        body: JSON.stringify({ url: scrapeUrl, scope: scrapeScope }),
       });
 
       const result = await response.json();
 
       if (response.ok && result.status === "success") {
         setPreviewData(result.data);
-        setScrapeStatus({ type: "success", text: `✨ Berhasil menemukan ${result.data.length} FAQ! Silakan kurasi di bawah.` });
+        setScrapeMetrics(result.metrics ? {
+          ...result.metrics,
+          scope: result.scope || scrapeScope,
+          pages_scanned: typeof result.pages_scanned === "number" ? result.pages_scanned : 1,
+        } : null);
+        const qualityScore = typeof result.metrics?.quality_score === "number" ? result.metrics.quality_score : null;
+        setScrapeStatus({
+          type: "success",
+          text: qualityScore !== null
+            ? `✨ Berhasil menemukan ${result.data.length} FAQ! Skor kualitas scrape: ${qualityScore}/100.`
+            : `✨ Berhasil menemukan ${result.data.length} FAQ! Silakan kurasi di bawah.`,
+        });
       } else {
+        setScrapeMetrics(result.metrics ? {
+          ...result.metrics,
+          scope: result.scope || scrapeScope,
+          pages_scanned: typeof result.pages_scanned === "number" ? result.pages_scanned : 0,
+        } : null);
         setScrapeStatus({ type: "error", text: result.error || "Gagal melakukan scraping." });
       }
     } catch (error) {
@@ -342,7 +375,9 @@ export default function DashboardPage() {
     setIsScraping(false);
     setScrapeStatus({ type: "", text: "" });
     setScrapeUrl("");
+    setScrapeScope("exact");
     setPreviewData([]);
+    setScrapeMetrics(null);
   };
 
   const fetchAdminSettings = async () => {
@@ -1369,28 +1404,41 @@ export default function DashboardPage() {
             
             <div className="p-4 border border-gray-100 rounded-lg bg-white mb-4 shadow-sm">
               <label className="block text-sm font-semibold text-gray-700 mb-2">URL Target (Contoh: https://upj.ac.id/tentang-kami)</label>
-              <div className="flex gap-3">
+              <div className="mb-3">
+                <label className="block text-xs font-semibold text-gray-500 mb-1">Scope Scrape</label>
+                <select
+                  value={scrapeScope}
+                  onChange={(e) => setScrapeScope(e.target.value as "exact" | "path")}
+                  className="w-full sm:max-w-xs p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none text-sm bg-white"
+                >
+                  <option value="exact">Halaman ini saja</option>
+                  <option value="path">Semua halaman dalam path yang sama</option>
+                </select>
+              </div>
+              <div className="flex flex-col gap-3 sm:flex-row">
                 <input
                   type="url"
                   value={scrapeUrl}
                   onChange={(e) => setScrapeUrl(e.target.value)}
                   placeholder="Masukkan link website..."
-                  className="flex-1 p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+                  className="w-full flex-1 p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none text-sm"
                 />
-                <button
-                  onClick={handleScrape}
-                  disabled={isScraping}
-                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-5 rounded transition-all disabled:opacity-50 text-sm whitespace-nowrap"
-                >
-                  {isScraping ? "Menyedot..." : "Mulai Scrape"}
-                </button>
-                <button
-                  onClick={handleCancelScrape}
-                  disabled={isScraping}
-                  className="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-5 rounded transition-all disabled:opacity-50 text-sm whitespace-nowrap"
-                >
-                  Batal
-                </button>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <button
+                    onClick={handleScrape}
+                    disabled={isScraping}
+                    className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-5 rounded transition-all disabled:opacity-50 text-sm whitespace-nowrap"
+                  >
+                    {isScraping ? "Menyedot..." : "Mulai Scrape"}
+                  </button>
+                  <button
+                    onClick={handleCancelScrape}
+                    disabled={isScraping}
+                    className="w-full sm:w-auto bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-5 rounded transition-all disabled:opacity-50 text-sm whitespace-nowrap"
+                  >
+                    Batal
+                  </button>
+                </div>
               </div>
 
               {scrapeStatus.text && (
@@ -1401,29 +1449,82 @@ export default function DashboardPage() {
             </div>
 
             {previewData.length > 0 && (
-              <div className="border border-blue-100 rounded-lg bg-blue-50 p-4">
-                <div className="flex justify-between items-center mb-4">
+              <div className="border border-blue-100 rounded-lg bg-blue-50 p-3 sm:p-4">
+                {scrapeMetrics && (
+                  <div className="mb-4 rounded-xl border border-blue-100 bg-white p-3 sm:p-4 shadow-sm">
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between mb-3">
+                      <div>
+                        <h3 className="text-md font-bold text-slate-900">Metrik Scrape</h3>
+                        <p className="text-xs text-slate-500">Skor ini heuristik, dipakai untuk bantu cek hasil scrape cepat.</p>
+                      </div>
+                      <div className="inline-flex items-center rounded-full bg-blue-50 px-3 py-1 text-sm font-bold text-blue-700">
+                        {scrapeMetrics.quality_score}/100 · {scrapeMetrics.quality_label}
+                      </div>
+                    </div>
+
+                    <div className="mb-3 flex flex-wrap gap-2 text-xs text-slate-600">
+                      <span className="rounded-full bg-slate-100 px-3 py-1">Scope: {scrapeMetrics.scope === "path" ? "Path" : "Exact"}</span>
+                      <span className="rounded-full bg-slate-100 px-3 py-1">Pages scanned: {scrapeMetrics.pages_scanned}</span>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      <div className="rounded-xl bg-slate-50 p-3">
+                        <div className="text-xs text-slate-500">Kelengkapan FAQ</div>
+                        <div className="mt-1 text-lg font-bold text-slate-900">{scrapeMetrics.completeness_rate}%</div>
+                        <div className="text-xs text-slate-500">{scrapeMetrics.valid_pairs}/{scrapeMetrics.faq_count} pasangan valid</div>
+                      </div>
+                      <div className="rounded-xl bg-slate-50 p-3">
+                        <div className="text-xs text-slate-500">Format pertanyaan</div>
+                        <div className="mt-1 text-lg font-bold text-slate-900">{scrapeMetrics.question_format_rate}%</div>
+                        <div className="text-xs text-slate-500">Pertanyaan yang terlihat seperti pertanyaan</div>
+                      </div>
+                      <div className="rounded-xl bg-slate-50 p-3">
+                        <div className="text-xs text-slate-500">Kedalaman jawaban</div>
+                        <div className="mt-1 text-lg font-bold text-slate-900">{scrapeMetrics.avg_answer_length} char</div>
+                        <div className="text-xs text-slate-500">Rata-rata panjang jawaban</div>
+                      </div>
+                      <div className="rounded-xl bg-slate-50 p-3">
+                        <div className="text-xs text-slate-500">Teks sumber</div>
+                        <div className="mt-1 text-lg font-bold text-slate-900">{scrapeMetrics.source_text_length} char</div>
+                        <div className="text-xs text-slate-500">Kualitas konten halaman asal</div>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 text-xs text-slate-500">{scrapeMetrics.note}</div>
+                  </div>
+                )}
+
+                <div className="flex flex-col gap-2 sm:flex-row sm:justify-between sm:items-center mb-4">
                   <h3 className="text-md font-bold text-blue-900">Tabel Kurasi (Preview)</h3>
                   <button
                     onClick={handleSaveScrapeToFirestore}
                     disabled={isSavingScrape}
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1.5 px-4 rounded-xl text-sm transition-all disabled:opacity-50"
+                    className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-1.5 px-4 rounded-xl text-sm transition-all disabled:opacity-50"
                   >
                     {isSavingScrape ? "Menyimpan..." : "ACC & Simpan ke Firestore"}
                   </button>
                 </div>
 
-                <div className="space-y-3 max-h-96 overflow-y-auto pr-2">
+                <div className="space-y-3 max-h-[32rem] overflow-y-auto pr-1 sm:pr-2">
                   {previewData.map((item, index) => (
-                    <div key={index} className="flex gap-3 p-3 border border-white rounded bg-white items-start shadow-sm">
-                      <div className="font-bold text-gray-400 text-sm mt-1">#{index + 1}</div>
-                      <div className="flex-1 space-y-2">
+                    <div key={index} className="flex flex-col gap-2 p-3 sm:p-4 border border-white rounded-lg bg-white items-stretch shadow-sm sm:flex-row sm:items-start sm:gap-3">
+                      <div className="flex items-center justify-between sm:flex-col sm:justify-start sm:items-start sm:w-10 shrink-0">
+                        <div className="font-bold text-gray-400 text-sm">#{index + 1}</div>
+                        <button
+                          onClick={() => handleDeleteScrapeRow(index)}
+                          className="sm:hidden p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-all"
+                          title="Hapus baris ini"
+                        >
+                          ❌
+                        </button>
+                      </div>
+                      <div className="flex-1 space-y-2 min-w-0">
                         <div>
                           <input
                             type="text"
                             value={item.q}
                             onChange={(e) => handleEditScrape(index, "q", e.target.value)}
-                            className="w-full p-2 border border-gray-200 rounded focus:border-blue-500 outline-none text-black font-semibold text-sm"
+                            className="w-full p-2.5 border border-gray-200 rounded-lg focus:border-blue-500 outline-none text-black font-semibold text-sm"
                             placeholder="Pertanyaan"
                           />
                         </div>
@@ -1432,14 +1533,14 @@ export default function DashboardPage() {
                             value={item.a}
                             onChange={(e) => handleEditScrape(index, "a", e.target.value)}
                             rows={2}
-                            className="w-full p-2 border border-gray-200 rounded focus:border-blue-500 outline-none text-black text-sm"
+                            className="w-full p-2.5 border border-gray-200 rounded-lg focus:border-blue-500 outline-none text-black text-sm resize-y"
                             placeholder="Jawaban"
                           />
                         </div>
                       </div>
                       <button
                         onClick={() => handleDeleteScrapeRow(index)}
-                        className="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-all mt-1"
+                        className="hidden sm:inline-flex self-end sm:self-start p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded transition-all mt-1"
                         title="Hapus baris ini"
                       >
                         ❌
